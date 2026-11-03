@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <title>Besichtigung</title>
 <!--
-  Standort-Besichtigung - Schritt fuer Schritt je Standort, mit Fotos, Video
+  Standort-Besichtigung - Schritt fuer Schritt je Standort, mit Mass-Foto
   und ZIP zum Weitergeben.
   WICHTIG: In diesem Programm stehen KEINE Kundendaten. Die Liste wird auf
   dem Handy aus einer Datei geladen (AirDrop) und bleibt nur dort.
@@ -177,7 +177,10 @@ async function ladeMedien(kid) {
     url: m.typ.startsWith("image/") ? URL.createObjectURL(m.blob) : null }));
   return cache[kid];
 }
-const SCHRITTE = ["Ankommen", "Foto frontal", "Maß rechts", "Video", "Kommt in Frage?", "Notiz", "Abschluss"];
+// Mirko 03.11.2026: "Foto mit Maßband und Maße reicht ... ein Video ist hinfällig" -
+// nur noch das Maß-Foto (Maßband-App oder Zollstock) und die Zahl. Kein Frontal-Foto, kein Video.
+const SCHRITTE = ["Ankommen", "Maß rechts", "Kommt in Frage?", "Notiz", "Abschluss"];
+const ZIP_ARTEN = ["mass"];   // nur diese Aufnahmen kommen in die ZIP
 
 function jetzt() { return new Date().toISOString(); }
 function e(id) { if (!erg[id]) erg[id] = { besuche: [], rechtsCm: "", rechtsFrei: "", inFrage: "", notiz: "", fertig: false }; return erg[id]; }
@@ -306,7 +309,8 @@ function zipPlan(medienListe) {
   const proKunde = {}; medienListe.forEach(m => (proKunde[m.kunde] = proKunde[m.kunde] || []).push(m));
   const plan = { ja: [], nein: [], offen: [] };
   for (const k of kunden) {
-    const r = erg[k.id] || {}; const m = (proKunde[k.id] || []).sort((a, b) => a.zeit.localeCompare(b.zeit));
+    const r = erg[k.id] || {};
+    const m = (proKunde[k.id] || []).filter(x => ZIP_ARTEN.includes(x.art)).sort((a, b) => a.zeit.localeCompare(b.zeit));
     const eintrag = { k, r, medien: m };
     if (r.inFrage === "ja") plan.ja.push(eintrag); else if (r.inFrage === "nein") plan.nein.push(eintrag); else plan.offen.push(eintrag);
   }
@@ -352,7 +356,7 @@ ${info.auswahl ? `<p class="aus">${esc(info.auswahl)}</p>` : ""}
 <h2 class="ja">Kommt in Frage (${plan.ja.length})</h2>${tabelle(plan.ja, "ja")}
 <h2 class="nein">Kommt nicht in Frage (${plan.nein.length})</h2>${tabelle(plan.nein, "nein")}
 ${plan.offen.length ? `<h2>Noch nicht besichtigt (${plan.offen.length})</h2><p>${plan.offen.map(x => esc(x.k.name + " (" + x.k.ort + ")")).join(" · ")}</p>` : ""}
-<p><small>Je Standort ein Ordner mit Steckbrief, Fotos (frontal, Maß rechts) und Video.</small></p></body></html>`;
+<p><small>Je Standort ein Ordner mit Steckbrief und Maß-Foto (Platz rechts neben dem Automaten).</small></p></body></html>`;
 }
 async function zipErstellen() {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
@@ -460,9 +464,9 @@ function ansichtMehr() {
       <button class="gross start" data-akt="zip">ZIP-Vorschau</button></div>
     <div class="karte"><b>Ergebnisse an den Mac</b><p class="klein">Nur die Angaben (ohne Fotos) als kleine Datei, z. B. per AirDrop.</p>
       <button class="knopf2" data-akt="senden">Ergebnisse senden</button></div>
-    <div class="karte"><b>Kundenliste</b><p class="klein">${kunden.length} Standorte${info.importiert ? ", geladen am " + uhr(info.importiert) : ""}. Ihre Angaben, Fotos und Videos bleiben beim Neuladen erhalten.</p>
+    <div class="karte"><b>Kundenliste</b><p class="klein">${kunden.length} Standorte${info.importiert ? ", geladen am " + uhr(info.importiert) : ""}. Ihre Angaben und Fotos bleiben beim Neuladen erhalten.</p>
       <button class="knopf2" data-akt="laden">Neue Kundenliste laden</button></div>
-    <div class="karte"><b>So geht’s</b><p class="klein">Kunde antippen → „Ich bin da“ → Schritte abarbeiten → „Fertig“. „Foto aufnehmen“ und „Video aufnehmen“ öffnen die Kamera direkt. Das Maßband-Foto in der App „Maßband“ machen, in Fotos sichern und hier mit „Maßband-Foto hinzufügen“ auswählen.</p></div>
+    <div class="karte"><b>So geht’s</b><p class="klein">Kunde antippen → „Ich bin da“ → Maß-Foto und Zahl → kommt in Frage? → „Fertig“. Das Maßband-Foto in der App „Maßband“ machen, in Fotos sichern und hier mit „Maßband-Foto hinzufügen“ auswählen. „Foto mit Zollstock aufnehmen“ öffnet die Kamera direkt.</p></div>
   </main>`;
 }
 
@@ -476,9 +480,7 @@ function ansichtZip() {
   const karte = (x, gruppe) => {
     const namen = dateiNamen(x.medien), r = x.r, k = x.k;
     const fehlt = [];
-    if (!x.medien.some(m => m.art === "front")) fehlt.push("Foto frontal");
     if (!x.medien.some(m => m.art === "mass")) fehlt.push("Maß-Foto");
-    if (!x.medien.some(m => m.art === "video")) fehlt.push("Video");
     if (!r.rechtsCm) fehlt.push("cm");
     const mini = x.medien.map(m => { if (!m.typ.startsWith("image/")) return `<span>🎥</span>`;
       urls[m.id] = urls[m.id] || URL.createObjectURL(m.blob); return `<img src="${urls[m.id]}" alt="">`; }).join("");
@@ -546,37 +548,26 @@ function ansichtKunde() {
               : `<button class="gross start" data-akt="ankommen">Ich bin da</button>`}
       ${r.besuche.length ? `<div class="zeiten">Besuche: ${r.besuche.map(b => uhr(b.start) + (b.ende ? "–" + uhr(b.ende).slice(-5) : " (läuft)")).join(", ")}</div>` : ""}</div>`;
   } else if (s === 1) {
-    inhalt = `<div class="schritt"><h3>2. Foto frontal</h3>
-      <div class="hinweis">Gerade von vorne. <b>Der ganze Automat mit allen vier Ecken</b> im Bild, dazu etwas Wand rechts daneben.</div>
-      ${knoepfe("front", { q: "kamera", t: "📷 Foto aufnehmen" }, { q: "fotos", t: "Aus Fotos wählen" })}
-      ${galerie(k.id, "front")}</div>`;
-  } else if (s === 2) {
-    inhalt = `<div class="schritt"><h3>3. Maß rechts</h3>
-      <div class="hinweis">In der App <b>Maßband</b> vom <b>rechten Rand des Automaten</b> nach rechts messen, Auslöser drücken und das Bild in Fotos sichern. Benötigt: <b>90–100 cm</b>.</div>
-      ${knoepfe("mass", { q: "fotos", t: "📏 Maßband-Foto hinzufügen" }, { q: "kamera", t: "📷 Foto aufnehmen (z. B. Zollstock)" })}
+    inhalt = `<div class="schritt"><h3>2. Maß rechts</h3>
+      <div class="hinweis">In der App <b>Maßband</b> vom <b>rechten Rand des Automaten</b> nach rechts messen, Auslöser drücken und das Bild in Fotos sichern. Automat und Messlinie sollen auf dem Bild sein. Benötigt: <b>90–100 cm</b>.</div>
+      ${knoepfe("mass", { q: "fotos", t: "📏 Maßband-Foto hinzufügen" }, { q: "kamera", t: "📷 Foto mit Zollstock aufnehmen" })}
       ${galerie(k.id, "mass")}
       <label class="feld" for="cm">Rechts frei (cm)</label>
       <input class="cm" id="cm" type="number" inputmode="numeric" min="0" max="999" placeholder="z. B. 95" value="${esc(r.rechtsCm)}">
       <label class="feld">Reichen 90–100 cm?</label>${janein("rechtsFrei", r.rechtsFrei)}</div>`;
-  } else if (s === 3) {
-    inhalt = `<div class="schritt"><h3>4. Video</h3>
-      <div class="hinweis"><b>Hochkant, 3–5 Sekunden.</b> Am Automaten beginnen und langsam nach rechts schwenken.</div>
-      ${knoepfe("video", { q: "kamera", t: "🎥 Video aufnehmen" }, { q: "fotos", t: "Aus Fotos wählen" })}
-      ${galerie(k.id, "video")}</div>`;
-  } else if (s === 4) {
-    inhalt = `<div class="schritt"><h3>5. Kommt der Standort in Frage?</h3>
+  } else if (s === 2) {
+    inhalt = `<div class="schritt"><h3>3. Kommt der Standort in Frage?</h3>
       <div class="hinweis">Auch „Nein“ ankreuzen – dann ist klar, dass er geprüft wurde.</div>${janein("inFrage", r.inFrage)}</div>`;
-  } else if (s === 5) {
-    inhalt = `<div class="schritt"><h3>6. Notiz</h3>
+  } else if (s === 3) {
+    inhalt = `<div class="schritt"><h3>4. Notiz</h3>
       <div class="hinweis">Wie ist der Automat angebracht, was ist im Weg (Fenster, Fallrohr, Hausecke …)? Freiwillig.</div>
       <textarea id="notiz" placeholder="Notiz …">${esc(r.notiz)}</textarea></div>`;
   } else {
     const p = (ok, t) => `<li class="${ok ? "ok" : "fehlt"}">${ok ? "✓" : "○"} ${t}</li>`;
-    inhalt = `<div class="schritt"><h3>7. Abschluss</h3><div class="karte"><ul class="zusammen">
-      ${p(r.besuche.length > 0, "Ankunft erfasst")}${p(n("front") > 0, "Foto frontal (" + n("front") + ")")}
-      ${p(n("mass") > 0, "Maß-Foto (" + n("mass") + ")")}
+    inhalt = `<div class="schritt"><h3>5. Abschluss</h3><div class="karte"><ul class="zusammen">
+      ${p(r.besuche.length > 0, "Ankunft erfasst")}${p(n("mass") > 0, "Maß-Foto (" + n("mass") + ")")}
       ${p(r.rechtsCm !== "", "Rechts frei: " + (r.rechtsCm !== "" ? esc(r.rechtsCm) + " cm" : "keine Zahl"))}
-      ${p(r.rechtsFrei !== "", "90–100 cm reichen: " + (r.rechtsFrei || "offen"))}${p(n("video") > 0, "Video (" + n("video") + ")")}
+      ${p(r.rechtsFrei !== "", "90–100 cm reichen: " + (r.rechtsFrei || "offen"))}
       ${p(r.inFrage !== "", "Kommt in Frage: " + (r.inFrage || "offen"))}${p(true, "Notiz: " + (r.notiz ? esc(r.notiz.slice(0, 60)) + (r.notiz.length > 60 ? "…" : "") : "–"))}
       </ul></div><div class="hinweis">Mit „Fertig“ ist der Kunde erledigt. Fehlendes können Sie jederzeit nachtragen.</div></div>`;
   }
