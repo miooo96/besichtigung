@@ -341,35 +341,107 @@ function steckbrief(k, r) {
     `Besichtigt:     ${(r.besuche || []).map(b => uhr(b.start)).join(", ") || "-"}`];
   return z.join("\r\n") + "\r\n";
 }
-function uebersicht(plan) {
-  const zeile = (x, gruppe) => { const k = x.k, r = x.r;
-    const pfad = encodeURI(`${OBER[gruppe]}/${ordnerName(k)}/`);
-    return `<tr><td>${esc(k.nr)}</td><td><a href="${pfad}">${esc(k.name)}</a>${k.name2 ? "<br><small>" + esc(k.name2) + "</small>" : ""}</td>
-      <td>${esc(adresse(k))}<br><small>${esc(k.plz)} ${esc(k.ort)}</small></td><td>${esc(k.typ)}<br><small>${esc(scText(k.sc))} · ${esc(k.turnus)}</small></td>
-      <td style="text-align:center">${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"}<br><small>reicht: ${esc(r.rechtsFrei || "–")}</small></td>
-      <td>${esc(r.notiz || "")}</td><td style="text-align:center">${x.medien.length}</td></tr>`; };
-  const tabelle = (liste, gruppe) => liste.length ? `<table><tr><th>Nr.</th><th>Kunde / Dulder</th><th>Adresse</th><th>Typ / Anbau</th><th>Rechts frei</th><th>Notiz</th><th>Dateien</th></tr>
-    ${liste.map(x => zeile(x, gruppe)).join("")}</table>` : "<p>–</p>";
+/* Uebersicht = das End-Dokument. Mirko 03.11.2026: Mass-Fotos "klein drin, beim Andruecken groesser".
+   Die Fotos stecken als Daten direkt in der Datei (kein Link, kein Server): eine Datei, die
+   ueberall aufgeht - iPhone, PC, Mail-Anhang, auch ohne die ZIP zu entpacken. Vergroessern ohne
+   Skript ueber <details> (antippen = gross, nochmal = klein). */
+async function alsDatenUrl(blob, max) {
+  try {
+    const b = await createImageBitmap(blob, { imageOrientation: "from-image" });
+    const f = Math.min(1, max / Math.max(b.width, b.height));
+    const c = document.createElement("canvas"); c.width = Math.round(b.width * f); c.height = Math.round(b.height * f);
+    c.getContext("2d").drawImage(b, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.8);
+  } catch (err) {
+    return await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
+  }
+}
+async function uebersichtBilder(plan, fortschritt) {
+  const bilder = {}, alle = [...plan.ja, ...plan.nein]; let n = 0;
+  const gesamt = alle.reduce((s, x) => s + x.medien.length, 0);
+  for (const x of alle) {
+    bilder[x.k.id] = [];
+    // 1200 px: gross genug zum Vergroessern am PC, klein genug fuer einen Mail-Anhang
+    for (const m of x.medien) { bilder[x.k.id].push(await alsDatenUrl(m.blob, 1200)); if (fortschritt) fortschritt(++n, gesamt); }
+  }
+  return bilder;
+}
+function uebersicht(plan, bilder) {
+  const karte = (x, gruppe) => { const k = x.k, r = x.r;
+    const fotos = (bilder[k.id] || []).map((u, i) => `<details><summary><img src="${u}" alt="Maß-Foto ${i + 1}"></summary></details>`).join("");
+    return `<div class="karte ${gruppe}">
+      <div class="kopfzeile"><span class="nr">${esc(k.nr)}</span> <b>${esc(k.name)}</b>${k.name2 ? ` <span class="grau">· ${esc(k.name2)}</span>` : ""}</div>
+      <div>${esc(adresse(k))}, ${esc(k.plz)} ${esc(k.ort)}</div>
+      <div class="grau">${esc(k.typ || "–")} · ${esc(scText(k.sc))} · Turnus ${esc(k.turnus || "–")}${k.aut ? " · " + esc(k.aut) : ""}</div>
+      <div class="mass">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} <span class="reicht ${r.rechtsFrei === "ja" ? "ja" : r.rechtsFrei === "nein" ? "nein" : ""}">${r.rechtsFrei ? "90–100 cm reichen: " + esc(r.rechtsFrei) : ""}</span></div>
+      ${r.notiz ? `<div class="notiz">${esc(r.notiz)}</div>` : ""}
+      ${fotos ? `<div class="fotos">${fotos}</div>` : `<div class="grau">kein Maß-Foto</div>`}
+    </div>`; };
+  const abschnitt = (liste, gruppe) => liste.length ? `<div class="raster">${liste.map(x => karte(x, gruppe)).join("")}</div>` : `<p class="grau">–</p>`;
   const d = new Date();
-  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>${esc(info.titel || "Übersicht")}</title>
-<style>body{font:15px/1.4 Arial,sans-serif;margin:24px;color:#111}h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:24px 0 8px}
-table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:6px 8px;vertical-align:top;text-align:left}
-th{background:#f3f4f6}small{color:#4b5563}.ja{color:#047857}.nein{color:#b91c1c}.aus{font-style:italic;margin:6px 0 14px}</style></head><body>
-<h1>${esc(info.titel || "Standort-Besichtigung")}</h1>
-<div>Stand ${d.toLocaleDateString("de-DE")} · ${standorte(plan.ja.length + plan.nein.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage</div>
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(info.titel || "Übersicht")}</title>
+<style>
+body{font:15px/1.45 -apple-system,"Segoe UI",Arial,sans-serif;margin:0;background:#f3f4f6;color:#111827}
+header{background:#0f2a4a;color:#fff;padding:18px 20px}header h1{margin:0 0 4px;font-size:22px}header div{opacity:.85}
+.inhalt{max-width:1150px;margin:0 auto;padding:16px}
+.aus{background:#fff;border-left:4px solid #0f2a4a;padding:10px 14px;border-radius:8px;margin:0 0 8px}
+h2{font-size:19px;margin:22px 0 10px}h2.ja{color:#047857}h2.nein{color:#b91c1c}
+.raster{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
+.karte{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;border-top:4px solid #9ca3af}
+.karte.ja{border-top-color:#047857}.karte.nein{border-top-color:#b91c1c}
+.karte:has(details[open]){grid-column:1/-1}
+.kopfzeile{font-size:16px;margin-bottom:4px}.nr{display:inline-block;min-width:30px;font-weight:700;color:#6b7280}
+.grau{color:#6b7280;font-size:14px}.mass{font-size:18px;font-weight:700;margin:8px 0 2px}
+.reicht{font-size:14px;font-weight:600;margin-left:6px}.reicht.ja{color:#047857}.reicht.nein{color:#b91c1c}
+.notiz{background:#f9fafb;border-radius:8px;padding:6px 9px;margin-top:6px;font-size:14px}
+.fotos{margin-top:8px}details{display:inline-block;vertical-align:top;margin:0 6px 6px 0}
+summary{list-style:none;cursor:zoom-in}summary::-webkit-details-marker{display:none}
+details img{display:block;width:104px;height:138px;object-fit:cover;border-radius:8px;border:1px solid #d1d5db}
+details[open]{display:block;margin:6px 0}details[open] summary{cursor:zoom-out}
+details[open] img{width:auto;max-width:100%;height:auto;max-height:90vh;object-fit:contain}
+footer{color:#6b7280;font-size:13px;padding:6px 16px 24px;max-width:1150px;margin:0 auto}
+</style></head><body>
+<header><h1>${esc(info.titel || "Standort-Besichtigung")}</h1>
+<div>Stand ${d.toLocaleDateString("de-DE")} · ${standorte(plan.ja.length + plan.nein.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage</div></header>
+<div class="inhalt">
 ${info.auswahl ? `<p class="aus">${esc(info.auswahl)}</p>` : ""}
-<h2 class="ja">Kommt in Frage (${plan.ja.length})</h2>${tabelle(plan.ja, "ja")}
-<h2 class="nein">Kommt nicht in Frage (${plan.nein.length})</h2>${tabelle(plan.nein, "nein")}
-${plan.offen.length ? `<h2>Noch nicht besichtigt (${plan.offen.length})</h2><p>${plan.offen.map(x => esc(x.k.name + " (" + x.k.ort + ")")).join(" · ")}</p>` : ""}
-<p><small>Je Standort ein Ordner mit Steckbrief und Maß-Foto (Platz rechts neben dem Automaten).</small></p></body></html>`;
+<p class="grau">Benötigt werden rechts neben dem Automaten 90–100 cm. Maß-Fotos antippen bzw. anklicken zum Vergrößern, erneut zum Verkleinern.</p>
+<h2 class="ja">Kommt in Frage (${plan.ja.length})</h2>${abschnitt(plan.ja, "ja")}
+<h2 class="nein">Kommt nicht in Frage (${plan.nein.length})</h2>${abschnitt(plan.nein, "nein")}
+${plan.offen.length ? `<h2>Noch nicht besichtigt (${plan.offen.length})</h2><p class="grau">${plan.offen.map(x => esc(x.k.name + " (" + x.k.ort + ")")).join(" · ")}</p>` : ""}
+</div><footer>In der ZIP liegt je Standort zusätzlich ein Ordner mit Steckbrief und den Maß-Fotos in voller Größe.</footer></body></html>`;
+}
+async function teilen(datei) {
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [datei] })) { await navigator.share({ files: [datei], title: datei.name }); return; }
+  } catch (err) { if (err && err.name === "AbortError") return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(datei); a.download = datei.name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function heute() { const d = new Date(), z = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`; }
+// Nur das End-Dokument als eine Datei (klein, gut fuer Mail) - ohne ZIP
+async function uebersichtTeilen() {
+  if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
+  try {
+    const plan = zipPlan(await medienAlle());
+    if (!plan.ja.length && !plan.nein.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Nein“."); return; }
+    const bilder = await uebersichtBilder(plan, (n, g) => zeige(`Fotos werden eingefügt … ${n} / ${g}`, 20000));
+    const datei = new File([uebersicht(plan, bilder)], `${sauber(info.titel || "Besichtigung")} – Übersicht ${heute()}.html`, { type: "text/html" });
+    zeige("Übersicht fertig (" + mb(datei.size) + ")");
+    await teilen(datei);
+  } catch (err) {
+    alert("Übersicht konnte nicht erstellt werden: " + (err && err.message || err));
+  } finally { ui.zipLaeuft = false; zeichnen(); }
 }
 async function zipErstellen() {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
   try {
     const plan = zipPlan(await medienAlle());
     if (!plan.ja.length && !plan.nein.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Nein“ – die ZIP wäre leer."); return; }
-    const enc = new TextEncoder(), eintraege = [];
-    eintraege.push({ name: "Übersicht.html", blob: new Blob([uebersicht(plan)], { type: "text/html" }) });
+    const eintraege = [];
+    const bilder = await uebersichtBilder(plan, (n, g) => zeige(`Fotos werden eingefügt … ${n} / ${g}`, 20000));
+    eintraege.push({ name: "Übersicht.html", blob: new Blob([uebersicht(plan, bilder)], { type: "text/html" }) });
     for (const gruppe of ["ja", "nein"]) for (const x of plan[gruppe]) {
       const basis = `${OBER[gruppe]}/${ordnerName(x.k)}/`;
       eintraege.push({ name: basis + "Steckbrief.txt", blob: new Blob(["﻿" + steckbrief(x.k, x.r)], { type: "text/plain" }) });
@@ -377,15 +449,9 @@ async function zipErstellen() {
       x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: m.blob }));
     }
     const zip = await zipBauen(eintraege, (n, g) => zeige(`ZIP wird erstellt … ${n} / ${g}`, 20000));
-    const d = new Date(), z = n => String(n).padStart(2, "0");
-    const name = `${sauber(info.titel || "Besichtigung")} ${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}.zip`;
-    const datei = new File([zip], name, { type: "application/zip" });
+    const datei = new File([zip], `${sauber(info.titel || "Besichtigung")} ${heute()}.zip`, { type: "application/zip" });
     zeige("ZIP fertig (" + mb(zip.size) + ")");
-    try {
-      if (navigator.canShare && navigator.canShare({ files: [datei] })) { await navigator.share({ files: [datei], title: name }); return; }
-    } catch (err) { if (err && err.name === "AbortError") return; }
-    const a = document.createElement("a"); a.href = URL.createObjectURL(datei); a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
+    await teilen(datei);
   } catch (err) {
     alert("ZIP konnte nicht erstellt werden: " + (err && err.message || err));
   } finally { ui.zipLaeuft = false; zeichnen(); }
@@ -529,9 +595,10 @@ function ansichtZip() {
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
   const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
-    <div class="karte"><div>📄 <b>Übersicht.html</b> – alle Standorte auf einen Blick${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}</div>
+    <div class="karte"><div>📄 <b>Übersicht.html</b> – alle Standorte auf einen Blick, mit den Maß-Fotos (klein, antippen = groß)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}</div>
       <div class="klein" style="margin-top:6px">${standorte(plan.ja.length + plan.nein.length)} in der ZIP · ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht in der ZIP)` : ""}</div></div>
-    <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "ZIP wird erstellt …" : "ZIP erstellen und sichern"}</button>
+    <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
+    <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur Übersicht teilen (eine Datei, mit Fotos)</button>
     <div class="ordner">📁 ${OBER.ja} (${plan.ja.length})</div>${plan.ja.map(x => karte(x, "ja")).join("") || `<p class="klein">–</p>`}
     <div class="ordner">📁 ${OBER.nein} (${plan.nein.length})</div>${plan.nein.map(x => karte(x, "nein")).join("") || `<p class="klein">–</p>`}
   </main>`;
@@ -638,6 +705,7 @@ document.addEventListener("click", async ev => {
   if (akt === "laden") return document.getElementById("datei").click();
   if (akt === "senden") return senden();
   if (akt === "zipbauen") return zipErstellen();
+  if (akt === "uebersicht") return uebersichtTeilen();
   if (akt === "allesweg") return allesZuruecksetzen();
   if (akt === "kundeweg") return kundeZuruecksetzen(ui.id);
   if (akt === "aufnehmen") {   // muss direkt im Klick passieren, sonst blockiert iOS die Kamera
