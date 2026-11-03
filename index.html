@@ -73,6 +73,9 @@
   .janein button { flex: 1; font-size: 20px; font-weight: 700; padding: 18px 0; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; color: var(--text); }
   .janein button.ja.an { background: var(--gruen); border-color: var(--gruen); color: #fff; }
   .janein button.nein.an { background: var(--rot); border-color: var(--rot); color: #fff; }
+  .wahl { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+  .wahl button { font-size: 20px; font-weight: 700; padding: 18px 0; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; color: var(--text); }
+  .wahl button.an { background: var(--blau2); border-color: var(--blau2); color: #fff; }
   label.feld { display: block; font-size: 15px; color: #374151; margin: 4px 0 6px; }
   input.cm { width: 100%; font-size: 24px; padding: 12px; border-radius: 12px; border: 2px solid #d1d5db; text-align: center; margin-bottom: 12px; }
   textarea { width: 100%; min-height: 150px; font: inherit; padding: 12px; border-radius: 12px; border: 2px solid #d1d5db; }
@@ -179,7 +182,9 @@ async function ladeMedien(kid) {
 }
 // Mirko 03.11.2026: "Foto mit Maßband und Maße reicht ... ein Video ist hinfällig" -
 // nur noch das Maß-Foto (Maßband-App oder Zollstock) und die Zahl. Kein Frontal-Foto, kein Video.
-const SCHRITTE = ["Ankommen", "Maß rechts", "Kommt in Frage?", "Notiz", "Abschluss"];
+// Mirko 03.11.2026: "Standortangaben ... ob es stark belebt ist, oder eher ruhiger abgelegen" -> Schritt "Lage"
+const SCHRITTE = ["Ankommen", "Maß rechts", "Lage", "Kommt in Frage?", "Notiz", "Abschluss"];
+const LAGE = { belebt: "stark belebt", mittel: "mittel", ruhig: "ruhig / abgelegen" };
 const ZIP_ARTEN = ["mass"];   // nur diese Aufnahmen kommen in die ZIP
 // Mirko 03.11.2026: statt Kamera direkt die Maßband-App. Apple bietet dafuer keinen
 // direkten Link (Entwicklerforum 112820) - der offizielle Weg ist ein Kurzbefehl,
@@ -188,7 +193,7 @@ const KURZBEFEHL = "Maßband öffnen";
 const MASSBAND_LINK = "shortcuts://run-shortcut?name=" + encodeURIComponent(KURZBEFEHL);
 
 function jetzt() { return new Date().toISOString(); }
-function e(id) { if (!erg[id]) erg[id] = { besuche: [], rechtsCm: "", rechtsFrei: "", inFrage: "", notiz: "", fertig: false }; return erg[id]; }
+function e(id) { if (!erg[id]) erg[id] = { besuche: [], rechtsCm: "", rechtsFrei: "", lage: "", inFrage: "", notiz: "", fertig: false }; return erg[id]; }
 function sichern(id) { if (id) erg[id].geaendert = jetzt(); schreiben(K_ERG, erg); }
 function uhr(iso) { const d = new Date(iso); return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) + " " +
   d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }); }
@@ -336,7 +341,7 @@ function steckbrief(k, r) {
     `Automat:        ${k.aut || "-"}${k.schl ? "  (Schlüssel " + k.schl + ")" : ""}`,
     `Typ:            ${k.typ || "-"}   Anbau: ${scText(k.sc)}   Turnus: ${k.turnus || "-"}`, "",
     `Rechts frei:    ${r.rechtsCm ? r.rechtsCm + " cm" : "-"}`,
-    `90-100 cm reichen: ${r.rechtsFrei || "-"}`, `Kommt in Frage: ${r.inFrage || "-"}`,
+    `90-100 cm reichen: ${r.rechtsFrei || "-"}`, `Lage:           ${LAGE[r.lage] || "-"}`, `Kommt in Frage: ${r.inFrage || "-"}`,
     `Notiz:          ${r.notiz || "-"}`, "",
     `Besichtigt:     ${(r.besuche || []).map(b => uhr(b.start)).join(", ") || "-"}`];
   return z.join("\r\n") + "\r\n";
@@ -374,6 +379,7 @@ function uebersicht(plan, bilder) {
       <div>${esc(adresse(k))}, ${esc(k.plz)} ${esc(k.ort)}</div>
       <div class="grau">${esc(k.typ || "–")} · ${esc(scText(k.sc))} · Turnus ${esc(k.turnus || "–")}${k.aut ? " · " + esc(k.aut) : ""}</div>
       <div class="mass">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} <span class="reicht ${r.rechtsFrei === "ja" ? "ja" : r.rechtsFrei === "nein" ? "nein" : ""}">${r.rechtsFrei ? "90–100 cm reichen: " + esc(r.rechtsFrei) : ""}</span></div>
+      <div class="lage">Lage: <b>${esc(LAGE[r.lage] || "–")}</b></div>
       ${r.notiz ? `<div class="notiz">${esc(r.notiz)}</div>` : ""}
       ${fotos ? `<div class="fotos">${fotos}</div>` : `<div class="grau">kein Maß-Foto</div>`}
     </div>`; };
@@ -394,7 +400,7 @@ h2{font-size:19px;margin:22px 0 10px}h2.ja{color:#047857}h2.nein{color:#b91c1c}
 .kopfzeile{font-size:16px;margin-bottom:4px}.nr{display:inline-block;min-width:30px;font-weight:700;color:#6b7280}
 .grau{color:#6b7280;font-size:14px}.mass{font-size:18px;font-weight:700;margin:8px 0 2px}
 .reicht{font-size:14px;font-weight:600;margin-left:6px}.reicht.ja{color:#047857}.reicht.nein{color:#b91c1c}
-.notiz{background:#f9fafb;border-radius:8px;padding:6px 9px;margin-top:6px;font-size:14px}
+.notiz{background:#f9fafb;border-radius:8px;padding:6px 9px;margin-top:6px;font-size:14px}.lage{font-size:15px;margin-top:2px}
 .fotos{margin-top:8px}details{display:inline-block;vertical-align:top;margin:0 6px 6px 0}
 summary{list-style:none;cursor:zoom-in}summary::-webkit-details-marker{display:none}
 details img{display:block;width:104px;height:138px;object-fit:cover;border-radius:8px;border:1px solid #d1d5db}
@@ -458,7 +464,7 @@ async function zipErstellen() {
 }
 
 /* ================= Zuruecksetzen (Mirko 03.11.2026: "nach dem Testen bei null anfangen") ================= */
-const hatDaten = r => r && (r.besuche && r.besuche.length || r.fertig || r.rechtsCm || r.inFrage || r.notiz);
+const hatDaten = r => r && (r.besuche && r.besuche.length || r.fertig || r.rechtsCm || r.inFrage || r.notiz || r.lage);
 async function allesZuruecksetzen() {
   const nKunden = Object.values(erg).filter(hatDaten).length;
   const nFotos = await tx("readonly", s => req(s.count()));
@@ -585,13 +591,14 @@ function ansichtZip() {
     const fehlt = [];
     if (!x.medien.some(m => m.art === "mass")) fehlt.push("Maß-Foto");
     if (!r.rechtsCm) fehlt.push("cm");
+    if (!r.lage) fehlt.push("Lage");
     const mini = x.medien.map(m => { if (!m.typ.startsWith("image/")) return `<span>🎥</span>`;
       urls[m.id] = urls[m.id] || URL.createObjectURL(m.blob); return `<img src="${urls[m.id]}" alt="">`; }).join("");
     return `<button class="karte zipkunde" data-akt="oeffnen" data-id="${esc(k.id)}" style="width:100%;text-align:left;font:inherit;color:inherit">
       <div class="titel">📁 ${esc(ordnerName(k))}</div>
       <div class="datei">Steckbrief.txt${namen.length ? " · " + namen.map(esc).join(" · ") : ""}</div>
       ${mini ? `<div class="mini">${mini}</div>` : ""}
-      <div class="klein">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} · reicht: ${esc(r.rechtsFrei || "–")}${r.notiz ? " · " + esc(r.notiz.slice(0, 50)) : ""}</div>
+      <div class="klein">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} · reicht: ${esc(r.rechtsFrei || "–")} · Lage: ${esc(LAGE[r.lage] || "–")}${r.notiz ? " · " + esc(r.notiz.slice(0, 50)) : ""}</div>
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
   const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
@@ -622,6 +629,10 @@ function datenKarte(k) {
 }
 function fortschritt() {
   return `<div class="fortschritt">${SCHRITTE.map((_, i) => `<span class="${i < ui.schritt ? "fertig" : i === ui.schritt ? "jetzt" : ""}"></span>`).join("")}</div>`;
+}
+function wahl(feld, wert, optionen) {
+  return `<div class="wahl">${Object.entries(optionen).map(([k, t]) =>
+    `<button class="${wert === k ? "an" : ""}" data-akt="setze" data-feld="${feld}" data-wert="${k}">${esc(t)}</button>`).join("")}</div>`;
 }
 function janein(feld, wert) {
   return `<div class="janein"><button class="ja ${wert === "ja" ? "an" : ""}" data-akt="setze" data-feld="${feld}" data-wert="ja">Ja</button>
@@ -663,18 +674,23 @@ function ansichtKunde() {
       <input class="cm" id="cm" type="number" inputmode="numeric" min="0" max="999" placeholder="z. B. 95" value="${esc(r.rechtsCm)}">
       <label class="feld">Reichen 90–100 cm?</label>${janein("rechtsFrei", r.rechtsFrei)}</div>`;
   } else if (s === 2) {
-    inhalt = `<div class="schritt"><h3>3. Kommt der Standort in Frage?</h3>
-      <div class="hinweis">Auch „Nein“ ankreuzen – dann ist klar, dass er geprüft wurde.</div>${janein("inFrage", r.inFrage)}</div>`;
+    inhalt = `<div class="schritt"><h3>3. Lage</h3>
+      <div class="hinweis">Wie belebt ist es am Standort – viel Laufkundschaft und Verkehr, oder eher ruhig und abgelegen?</div>
+      ${wahl("lage", r.lage, LAGE)}</div>`;
   } else if (s === 3) {
-    inhalt = `<div class="schritt"><h3>4. Notiz</h3>
+    inhalt = `<div class="schritt"><h3>4. Kommt der Standort in Frage?</h3>
+      <div class="hinweis">Auch „Nein“ ankreuzen – dann ist klar, dass er geprüft wurde.</div>${janein("inFrage", r.inFrage)}</div>`;
+  } else if (s === 4) {
+    inhalt = `<div class="schritt"><h3>5. Notiz</h3>
       <div class="hinweis">Wie ist der Automat angebracht, was ist im Weg (Fenster, Fallrohr, Hausecke …)? Freiwillig.</div>
       <textarea id="notiz" placeholder="Notiz …">${esc(r.notiz)}</textarea></div>`;
   } else {
     const p = (ok, t) => `<li class="${ok ? "ok" : "fehlt"}">${ok ? "✓" : "○"} ${t}</li>`;
-    inhalt = `<div class="schritt"><h3>5. Abschluss</h3><div class="karte"><ul class="zusammen">
+    inhalt = `<div class="schritt"><h3>6. Abschluss</h3><div class="karte"><ul class="zusammen">
       ${p(r.besuche.length > 0, "Ankunft erfasst")}${p(n("mass") > 0, "Maß-Foto (" + n("mass") + ")")}
       ${p(r.rechtsCm !== "", "Rechts frei: " + (r.rechtsCm !== "" ? esc(r.rechtsCm) + " cm" : "keine Zahl"))}
       ${p(r.rechtsFrei !== "", "90–100 cm reichen: " + (r.rechtsFrei || "offen"))}
+      ${p(!!r.lage, "Lage: " + (LAGE[r.lage] || "offen"))}
       ${p(r.inFrage !== "", "Kommt in Frage: " + (r.inFrage || "offen"))}${p(true, "Notiz: " + (r.notiz ? esc(r.notiz.slice(0, 60)) + (r.notiz.length > 60 ? "…" : "") : "–"))}
       </ul></div><div class="hinweis">Mit „Fertig“ ist der Kunde erledigt. Fehlendes können Sie jederzeit nachtragen.</div></div>`;
   }
