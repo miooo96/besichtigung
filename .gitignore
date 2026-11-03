@@ -1,0 +1,3 @@
+# Sicherheitsnetz: Daten-Dateien gehoeren nie in dieses oeffentliche Projekt.
+*.json
+.DS_Store

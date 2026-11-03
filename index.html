@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Besichtigung">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#0f2a4a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Besichtigung</title>
+<!--
+  Standort-Besichtigung - Schritt fuer Schritt je Standort.
+  WICHTIG: In diesem Programm stehen KEINE Kundendaten. Die Liste wird auf
+  dem Handy aus einer Datei geladen (AirDrop) und bleibt nur dort
+  (localStorage dieser Seite). Nichts wird an einen Server geschickt.
+  Fotos/Videos entstehen mit der normalen Kamera; das Werkzeug merkt sich
+  die Uhrzeit von "Ich bin da" bis "Fertig" - darueber werden die Aufnahmen
+  spaeter auf dem Mac zugeordnet.
+-->
+<style>
+  :root {
+    --blau: #0f2a4a; --blau2: #1d4ed8; --gruen: #047857; --gruen-hell: #d1fae5;
+    --rot: #b91c1c; --rot-hell: #fee2e2; --orange: #b45309; --orange-hell: #fef3c7;
+    --grau: #6b7280; --linie: #e5e7eb; --hg: #f3f4f6; --text: #111827;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--hg); color: var(--text);
+    font: 17px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
+  .kopf { position: sticky; top: 0; z-index: 5; background: var(--blau); color: #fff;
+    padding: calc(env(safe-area-inset-top) + 10px) 14px 10px; }
+  .kopf h1 { margin: 0; font-size: 19px; }
+  .kopf .unter { font-size: 13px; opacity: .8; }
+  .kopf .zeile { display: flex; align-items: center; gap: 10px; }
+  .kopf button.zurueck { background: none; border: 0; color: #fff; font-size: 17px; padding: 6px 0; }
+  main { padding: 12px 12px calc(env(safe-area-inset-bottom) + 110px); }
+  .suche { display: flex; gap: 8px; margin-bottom: 10px; }
+  .suche input { flex: 1; font-size: 17px; padding: 11px 12px; border: 1px solid #d1d5db; border-radius: 10px; }
+  .filter { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .chip { border: 1px solid #d1d5db; background: #fff; border-radius: 999px; padding: 7px 13px; font-size: 15px; }
+  .chip.an { background: var(--blau); color: #fff; border-color: var(--blau); }
+  .stand { font-size: 14px; color: var(--grau); margin: 0 2px 8px; }
+  .kunde { display: flex; gap: 12px; align-items: center; background: #fff; border-radius: 12px;
+    padding: 12px; margin-bottom: 8px; border: 1px solid var(--linie); width: 100%; text-align: left; font: inherit; color: inherit; }
+  .kunde .nr { font-size: 22px; font-weight: 700; min-width: 34px; text-align: center; }
+  .kunde .mitte { flex: 1; min-width: 0; }
+  .kunde .name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kunde .ort { font-size: 14px; color: var(--grau); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sc { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 7px; border-radius: 6px; color: #fff; }
+  .sc.s200 { background: var(--blau2); } .sc.s2002 { background: var(--gruen); } .sc.sx { background: var(--orange); }
+  .status { font-size: 13px; font-weight: 700; padding: 4px 8px; border-radius: 8px; white-space: nowrap; }
+  .status.offen { background: var(--hg); color: var(--grau); }
+  .status.laeuft { background: var(--orange-hell); color: var(--orange); }
+  .status.ja { background: var(--gruen-hell); color: var(--gruen); }
+  .status.nein { background: var(--rot-hell); color: var(--rot); }
+  .karte { background: #fff; border-radius: 14px; padding: 14px; border: 1px solid var(--linie); margin-bottom: 12px; }
+  .karte h2 { margin: 0 0 4px; font-size: 21px; }
+  .karte .z2 { color: #374151; font-size: 15px; margin-bottom: 8px; }
+  .daten { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 15px; }
+  .daten dt { color: var(--grau); } .daten dd { margin: 0; font-weight: 550; }
+  .daten a { color: var(--blau2); }
+  .fortschritt { display: flex; gap: 5px; margin: 4px 0 12px; }
+  .fortschritt span { flex: 1; height: 6px; border-radius: 3px; background: #d1d5db; }
+  .fortschritt span.fertig { background: var(--gruen); } .fortschritt span.jetzt { background: var(--blau2); }
+  .schritt h3 { margin: 0 0 6px; font-size: 20px; }
+  .hinweis { font-size: 15px; color: #374151; background: #eef2ff; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+  .gross { display: block; width: 100%; font-size: 19px; font-weight: 650; padding: 16px; border-radius: 12px;
+    border: 2px solid #d1d5db; background: #fff; color: var(--text); margin-bottom: 10px; }
+  .gross.haken { border-color: var(--gruen); background: var(--gruen-hell); color: var(--gruen); }
+  .gross.start { background: var(--blau); border-color: var(--blau); color: #fff; }
+  .janein { display: flex; gap: 10px; margin-bottom: 12px; }
+  .janein button { flex: 1; font-size: 20px; font-weight: 700; padding: 18px 0; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; }
+  .janein button.ja.an { background: var(--gruen); border-color: var(--gruen); color: #fff; }
+  .janein button.nein.an { background: var(--rot); border-color: var(--rot); color: #fff; }
+  label.feld { display: block; font-size: 15px; color: #374151; margin: 4px 0 6px; }
+  input.cm { width: 100%; font-size: 24px; padding: 12px; border-radius: 12px; border: 2px solid #d1d5db; text-align: center; margin-bottom: 12px; }
+  textarea { width: 100%; min-height: 150px; font: inherit; padding: 12px; border-radius: 12px; border: 2px solid #d1d5db; }
+  .fuss { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid var(--linie);
+    padding: 10px 12px calc(env(safe-area-inset-bottom) + 10px); display: flex; gap: 10px; z-index: 6; }
+  .fuss button { flex: 1; font-size: 18px; font-weight: 650; padding: 14px; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; }
+  .fuss button.weiter { background: var(--blau); border-color: var(--blau); color: #fff; }
+  .fuss button.fertig { background: var(--gruen); border-color: var(--gruen); color: #fff; }
+  .zusammen { list-style: none; } .zusammen li { margin-bottom: 4px; } .fehlt { color: var(--orange); font-weight: 650; } .ok { color: var(--gruen); }
+  .zeiten { font-size: 13px; color: var(--grau); margin-top: 8px; }
+  .leer { text-align: center; padding: 30px 16px; }
+  .leer p { color: #374151; }
+  .klein { font-size: 13px; color: var(--grau); }
+  .rand { margin-top: 22px; }
+  .knopf2 { font-size: 16px; padding: 12px; border-radius: 10px; border: 1px solid #d1d5db; background: #fff; width: 100%; margin-bottom: 8px; }
+  /* Meldung oben unter dem Kopf und nicht antippbar: sie lag am 03.11. im Test ueber "Ich bin da" */
+  .meldung { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 74px); background: #111827ee; color: #fff;
+    padding: 10px 14px; border-radius: 12px; font-size: 15px; z-index: 20; display: none; pointer-events: none; text-align: center; }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="meldung" id="meldung"></div>
+<input type="file" id="datei" accept=".json,application/json">
+
+<script>
+"use strict";
+/* ---------- Speicher (nur auf diesem Geraet) ---------- */
+const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
+const lesen = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+const schreiben = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+let kunden = lesen(K_KUNDEN, []);
+let erg = lesen(K_ERG, {});
+let info = lesen(K_INFO, {});
+const ui = { ansicht: "liste", id: null, schritt: 0, suche: "", filter: "alle" };
+
+const SCHRITTE = ["Ankommen", "Foto frontal", "Zollstock rechts", "Video", "Kommt in Frage?", "Notiz", "Abschluss"];
+
+function jetzt() { return new Date().toISOString(); }
+function e(id) { if (!erg[id]) erg[id] = { besuche: [], fotoFront: false, fotoZoll: false, video: false,
+  rechtsCm: "", rechtsFrei: "", inFrage: "", notiz: "", fertig: false }; return erg[id]; }
+function sichern(id) { if (id) erg[id].geaendert = jetzt(); schreiben(K_ERG, erg); }
+function uhr(iso) { const d = new Date(iso); return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) + " " +
+  d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }); }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function norm(s) { return String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/ß/g, "ss"); }
+function scKlasse(sc) { return sc === "SC 200" ? "s200" : sc === "SC 20-02" ? "s2002" : "sx"; }
+function scText(sc) { return /^SC/.test(sc || "") ? sc : "SC ?"; }
+function zeige(text) { const m = document.getElementById("meldung"); m.textContent = text; m.style.display = "block";
+  clearTimeout(zeige.t); zeige.t = setTimeout(() => m.style.display = "none", 2600); }
+
+function status(id) {
+  const r = erg[id];
+  if (!r || (!r.besuche.length && !r.fertig)) return { k: "offen", t: "offen" };
+  if (!r.fertig) return { k: "laeuft", t: "begonnen" };
+  if (r.inFrage === "ja") return { k: "ja", t: "✓ kommt in Frage" };
+  if (r.inFrage === "nein") return { k: "nein", t: "✓ kommt nicht in Frage" };
+  return { k: "ja", t: "✓ fertig" };
+}
+
+/* ---------- Liste laden ---------- */
+document.getElementById("datei").addEventListener("change", ev => {
+  const f = ev.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const d = JSON.parse(r.result);
+      const liste = Array.isArray(d) ? d : d.kunden;
+      if (!Array.isArray(liste) || !liste.length || !liste.every(k => k.id && k.name)) throw new Error("Format");
+      kunden = liste; schreiben(K_KUNDEN, kunden);
+      info.importiert = jetzt(); info.quelle = f.name; schreiben(K_INFO, info);
+      zeige(liste.length + " Standorte geladen.");
+      ui.ansicht = "liste"; zeichnen();
+    } catch (err) { alert("Diese Datei ist keine passende Kundenliste."); }
+    ev.target.value = "";
+  };
+  r.readAsText(f);
+});
+
+/* ---------- Ergebnisse senden (AirDrop / Teilen) ---------- */
+async function senden() {
+  const d = new Date(), z = n => String(n).padStart(2, "0");   // Ortszeit im Dateinamen
+  const name = `besichtigung-ergebnisse-${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}.json`;
+  const inhalt = { format: "besichtigung-ergebnisse", version: 1, erstellt: jetzt(),
+    zeitzone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ergebnisse: kunden.map(k => ({ id: k.id, nr: k.nr, name: k.name, aut: k.aut, ...(erg[k.id] || {}) }))
+      .filter(x => x.besuche || x.fertig) };
+  const datei = new File([JSON.stringify(inhalt, null, 1)], name, { type: "application/json" });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [datei] })) { await navigator.share({ files: [datei], title: name }); return; }
+  } catch (err) { if (err && err.name === "AbortError") return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(datei); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+/* ---------- Ansichten ---------- */
+function zeichnen() {
+  const app = document.getElementById("app");
+  if (!kunden.length) return app.innerHTML = ansichtLeer();
+  if (ui.ansicht === "kunde") return app.innerHTML = ansichtKunde();
+  if (ui.ansicht === "mehr") return app.innerHTML = ansichtMehr();
+  app.innerHTML = ansichtListe();
+  const s = document.getElementById("suche");
+  if (s && ui.fokus) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+}
+
+function ansichtLeer() {
+  return `<div class="kopf"><h1>Besichtigung</h1></div>
+  <main><div class="leer">
+    <p><b>Noch keine Kundenliste geladen.</b></p>
+    <p>Die Liste kommt per AirDrop vom Mac. Danach hier tippen und die Datei aus „Downloads“ wählen.</p>
+    <button class="gross start" data-akt="laden">Kundenliste laden</button>
+    <p class="klein">Die Liste bleibt nur auf diesem Handy. Es wird nichts an einen Server geschickt.</p>
+  </div></main>`;
+}
+
+function ansichtListe() {
+  const q = norm(ui.suche);
+  const treffer = kunden.filter(k => {
+    if (ui.filter === "offen" && erg[k.id] && erg[k.id].fertig) return false;
+    if (ui.filter === "fertig" && !(erg[k.id] && erg[k.id].fertig)) return false;
+    if (!q) return true;
+    return norm([k.nr, k.name, k.name2, k.ort, k.strasse, k.aut, k.plz].join(" ")).includes(q);
+  });
+  const fertig = kunden.filter(k => erg[k.id] && erg[k.id].fertig).length;
+  const chip = (f, t) => `<button class="chip ${ui.filter === f ? "an" : ""}" data-akt="filter" data-wert="${f}">${t}</button>`;
+  return `<div class="kopf"><div class="zeile"><div style="flex:1"><h1>Besichtigung</h1>
+      <div class="unter">${fertig} von ${kunden.length} erledigt</div></div>
+      <button class="chip" data-akt="mehr" style="background:transparent;color:#fff;border-color:#ffffff66">Mehr</button></div></div>
+  <main>
+    <div class="suche"><input id="suche" type="search" placeholder="Name, Ort, Straße, Aut-Nr. …" value="${esc(ui.suche)}" autocomplete="off"></div>
+    <div class="filter">${chip("alle", "Alle")}${chip("offen", "Nur offene")}${chip("fertig", "Erledigt")}</div>
+    <div class="stand">${treffer.length} angezeigt · Nummer = Fahrreihenfolge</div>
+    ${treffer.map(k => { const s = status(k.id); return `
+      <button class="kunde" data-akt="oeffnen" data-id="${esc(k.id)}">
+        <div class="nr">${esc(k.nr)}</div>
+        <div class="mitte"><div class="name">${esc(k.name)}</div>
+          <div class="ort">${esc((k.strasse + " " + (k.hnr || "")).trim())} · ${esc(k.ort)}</div>
+          <div style="margin-top:4px"><span class="sc ${scKlasse(k.sc)}">${esc(scText(k.sc))}</span></div></div>
+        <div class="status ${s.k}">${s.t}</div></button>`; }).join("")}
+  </main>`;
+}
+
+function ansichtMehr() {
+  return `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="liste">‹ Liste</button></div><h1>Mehr</h1></div>
+  <main>
+    <div class="karte"><b>Ergebnisse senden</b><p class="klein">Schickt Ihre Angaben und Uhrzeiten als Datei – am besten per AirDrop an den Mac. Fotos und Videos bleiben in Ihrer Fotos-App und werden über die Uhrzeit zugeordnet.</p>
+      <button class="gross start" data-akt="senden">Ergebnisse senden</button></div>
+    <div class="karte"><b>Kundenliste</b><p class="klein">${kunden.length} Standorte${info.importiert ? ", geladen am " + uhr(info.importiert) : ""}. Ihre bisherigen Angaben bleiben beim Neuladen erhalten.</p>
+      <button class="knopf2" data-akt="laden">Neue Kundenliste laden</button></div>
+    <div class="karte"><b>So geht’s</b><p class="klein">Kunde antippen → „Ich bin da“ → Schritte abarbeiten → „Fertig“. Fotos und Video mit der normalen Kamera (seitliche Kamerataste). Wichtig: Fotos zwischen „Ich bin da“ und „Fertig“ machen – darüber werden sie dem Kunden zugeordnet.</p></div>
+  </main>`;
+}
+
+function kopfKunde(k) {
+  return `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="liste">‹ Liste</button>
+    <div style="flex:1;text-align:right" class="unter">Nr. ${esc(k.nr)} · Schritt ${ui.schritt + 1} von ${SCHRITTE.length}</div></div>
+    <h1>${esc(k.name)}</h1></div>`;
+}
+
+function datenKarte(k) {
+  const tel = k.tel ? `<a href="tel:${esc(k.tel.replace(/[^0-9+]/g, ""))}">${esc(k.tel)}</a>` : "–";
+  return `<div class="karte"><h2>${esc(k.name)}</h2>${k.name2 ? `<div class="z2">${esc(k.name2)}</div>` : ""}
+    <dl class="daten">
+      <dt>Adresse</dt><dd>${esc((k.strasse + " " + (k.hnr || "")).trim())}<br>${esc(k.plz)} ${esc(k.ort)}${k.ungefaehr ? ' <span class="klein">(Hausnr. fehlt/ungefähr)</span>' : ""}</dd>
+      <dt>Telefon</dt><dd>${tel}</dd>
+      <dt>Aut-Nr.</dt><dd>${esc(k.aut || "–")}${k.schl ? " · Schl. " + esc(k.schl) : ""}</dd>
+      <dt>Typ</dt><dd>${esc(k.typ || "–")} · <span class="sc ${scKlasse(k.sc)}">${esc(scText(k.sc))}</span> · ${esc(k.turnus || "")}</dd>
+      ${k.hinweis ? `<dt>Hinweis</dt><dd>${esc(k.hinweis)}</dd>` : ""}
+    </dl></div>`;
+}
+
+function fortschritt() {
+  return `<div class="fortschritt">${SCHRITTE.map((_, i) => `<span class="${i < ui.schritt ? "fertig" : i === ui.schritt ? "jetzt" : ""}"></span>`).join("")}</div>`;
+}
+
+function janein(feld, wert) {
+  return `<div class="janein"><button class="ja ${wert === "ja" ? "an" : ""}" data-akt="setze" data-feld="${feld}" data-wert="ja">Ja</button>
+    <button class="nein ${wert === "nein" ? "an" : ""}" data-akt="setze" data-feld="${feld}" data-wert="nein">Nein</button></div>`;
+}
+
+function haken(feld, an, text) {
+  return `<button class="gross ${an ? "haken" : ""}" data-akt="haken" data-feld="${feld}">${an ? "✓ " : ""}${text}</button>`;
+}
+
+function ansichtKunde() {
+  const k = kunden.find(x => x.id === ui.id); if (!k) { ui.ansicht = "liste"; return ansichtListe(); }
+  const r = e(k.id); const s = ui.schritt; let inhalt = "";
+  if (s === 0) {
+    const offen = r.besuche.length && !r.besuche[r.besuche.length - 1].ende;
+    inhalt = datenKarte(k) + `<div class="schritt"><h3>1. Ankommen</h3>
+      <div class="hinweis">Tippen Sie auf „Ich bin da“, sobald Sie vor dem Automaten stehen. Ab jetzt gemachte Fotos und Videos gehören zu diesem Kunden.</div>
+      ${offen ? `<button class="gross haken" data-akt="weiter">✓ Angekommen um ${uhr(r.besuche[r.besuche.length - 1].start).slice(-5)} – weiter</button>`
+              : `<button class="gross start" data-akt="ankommen">${r.fertig ? "Noch einmal da – erneut erfassen" : "Ich bin da"}</button>`}
+      ${r.besuche.length ? `<div class="zeiten">Besuche: ${r.besuche.map(b => uhr(b.start) + (b.ende ? "–" + uhr(b.ende).slice(-5) : " (läuft)")).join(", ")}</div>` : ""}</div>`;
+  } else if (s === 1) {
+    inhalt = `<div class="schritt"><h3>2. Foto frontal</h3>
+      <div class="hinweis">Gerade von vorne fotografieren. <b>Der ganze Automat mit allen vier Ecken</b> muss im Bild sein, dazu etwas Wand rechts daneben.</div>
+      ${haken("fotoFront", r.fotoFront, "Foto gemacht")}</div>`;
+  } else if (s === 2) {
+    inhalt = `<div class="schritt"><h3>3. Platz rechts</h3>
+      <div class="hinweis">Zollstock vom <b>rechten Rand des Automaten</b> nach rechts an die Wand halten und fotografieren. Benötigt: <b>90–100 cm</b>.</div>
+      ${haken("fotoZoll", r.fotoZoll, "Foto mit Zollstock gemacht")}
+      <label class="feld" for="cm">Rechts frei (cm)</label>
+      <input class="cm" id="cm" type="number" inputmode="numeric" min="0" max="999" placeholder="z. B. 95" value="${esc(r.rechtsCm)}">
+      <label class="feld">Reichen 90–100 cm?</label>${janein("rechtsFrei", r.rechtsFrei)}</div>`;
+  } else if (s === 3) {
+    inhalt = `<div class="schritt"><h3>4. Video</h3>
+      <div class="hinweis"><b>Hochkant, 3–5 Sekunden.</b> Am Automaten beginnen und langsam nach rechts schwenken.</div>
+      ${haken("video", r.video, "Video gemacht")}</div>`;
+  } else if (s === 4) {
+    inhalt = `<div class="schritt"><h3>5. Kommt der Standort in Frage?</h3>
+      <div class="hinweis">Auch „Nein“ ankreuzen – dann ist klar, dass er geprüft wurde.</div>${janein("inFrage", r.inFrage)}</div>`;
+  } else if (s === 5) {
+    inhalt = `<div class="schritt"><h3>6. Notiz</h3>
+      <div class="hinweis">Wie ist der Automat angebracht, was ist im Weg (Fenster, Fallrohr, Hausecke …)? Freiwillig.</div>
+      <textarea id="notiz" placeholder="Notiz …">${esc(r.notiz)}</textarea></div>`;
+  } else {
+    const p = (ok, t) => `<li class="${ok ? "ok" : "fehlt"}">${ok ? "✓" : "○"} ${t}</li>`;
+    inhalt = `<div class="schritt"><h3>7. Abschluss</h3><div class="karte"><ul class="zusammen" style="margin:0;padding-left:0">
+      ${p(r.besuche.length > 0, "Ankunft erfasst")}${p(r.fotoFront, "Foto frontal")}${p(r.fotoZoll, "Foto mit Zollstock")}
+      ${p(r.rechtsCm !== "", "Rechts frei: " + (r.rechtsCm !== "" ? esc(r.rechtsCm) + " cm" : "keine Zahl"))}
+      ${p(r.rechtsFrei !== "", "90–100 cm reichen: " + (r.rechtsFrei || "offen"))}${p(r.video, "Video")}
+      ${p(r.inFrage !== "", "Kommt in Frage: " + (r.inFrage || "offen"))}${p(true, "Notiz: " + (r.notiz ? esc(r.notiz.slice(0, 60)) + (r.notiz.length > 60 ? "…" : "") : "–"))}
+      </ul></div><div class="hinweis">Mit „Fertig“ endet die Zeit für diesen Kunden. Fehlendes können Sie jederzeit nachtragen.</div></div>`;
+  }
+  const letzter = s === SCHRITTE.length - 1;
+  return kopfKunde(k) + `<main>${fortschritt()}${inhalt}</main>
+    <div class="fuss">${s > 0 ? `<button data-akt="zurueck">Zurück</button>` : `<button data-akt="liste">Liste</button>`}
+      ${letzter ? `<button class="fertig" data-akt="fertig">Fertig</button>` : `<button class="weiter" data-akt="weiter">Weiter</button>`}</div>`;
+}
+
+/* ---------- Eingaben ---------- */
+function eingabenUebernehmen() {
+  if (ui.ansicht !== "kunde") return;
+  const r = e(ui.id);
+  const cm = document.getElementById("cm"); if (cm) r.rechtsCm = cm.value.trim();
+  const no = document.getElementById("notiz"); if (no) r.notiz = no.value;
+  sichern(ui.id);
+}
+
+document.addEventListener("input", ev => {
+  if (ev.target.id === "suche") { ui.suche = ev.target.value; ui.fokus = true; zeichnen(); ui.fokus = false; return; }
+  if (ev.target.id === "cm" || ev.target.id === "notiz") eingabenUebernehmen();
+});
+
+document.addEventListener("click", ev => {
+  const b = ev.target.closest("[data-akt]"); if (!b) return;
+  const akt = b.dataset.akt;
+  if (akt !== "liste" && akt !== "oeffnen") eingabenUebernehmen();
+  if (akt === "laden") return document.getElementById("datei").click();
+  if (akt === "senden") return senden();
+  if (akt === "mehr") { ui.ansicht = "mehr"; }
+  else if (akt === "filter") { ui.filter = b.dataset.wert; }
+  else if (akt === "liste") { eingabenUebernehmen(); ui.ansicht = "liste"; }
+  else if (akt === "oeffnen") { ui.id = b.dataset.id; ui.ansicht = "kunde"; const r = erg[ui.id];
+    ui.schritt = r && r.besuche.length && !r.besuche[r.besuche.length - 1].ende ? 1 : 0; }
+  else if (akt === "ankommen") { const r = e(ui.id); r.besuche.push({ start: jetzt() }); r.fertig = false; sichern(ui.id);
+    ui.schritt = 1; zeige("Ankunft erfasst – jetzt fotografieren."); }
+  else if (akt === "weiter") {
+    // Ohne "Ich bin da" fehlt die Uhrzeit fuer die Foto-Zuordnung -> nachfragen
+    const r = e(ui.id), offen = r.besuche.length && !r.besuche[r.besuche.length - 1].ende;
+    if (ui.schritt === 0 && !offen) {
+      if (!confirm("Sind Sie jetzt vor Ort? Dann wird die Ankunft erfasst.")) return;
+      r.besuche.push({ start: jetzt() }); r.fertig = false; sichern(ui.id);
+    }
+    ui.schritt = Math.min(ui.schritt + 1, SCHRITTE.length - 1); }
+  else if (akt === "zurueck") { ui.schritt = Math.max(ui.schritt - 1, 0); }
+  else if (akt === "haken") { const r = e(ui.id); r[b.dataset.feld] = !r[b.dataset.feld]; sichern(ui.id); }
+  else if (akt === "setze") { const r = e(ui.id); const f = b.dataset.feld;
+    r[f] = r[f] === b.dataset.wert ? "" : b.dataset.wert; sichern(ui.id); }
+  else if (akt === "fertig") { const r = e(ui.id);
+    if (!r.besuche.length) r.besuche.push({ start: jetzt(), nachgetragen: true });
+    const l = r.besuche[r.besuche.length - 1]; if (!l.ende) l.ende = jetzt();
+    r.fertig = true; sichern(ui.id); ui.ansicht = "liste"; zeige("Gespeichert. Nächster Kunde!"); }
+  zeichnen(); window.scrollTo(0, 0);
+});
+
+zeichnen();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
