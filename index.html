@@ -357,7 +357,8 @@ function dateiNamen(medien) {
     return `${ART_NAME[m.art] || m.art} ${zaehl[m.art]}.${end}`; });
 }
 function steckbrief(k, r) {
-  const z = [`${k.name}${k.name2 ? " (" + k.name2 + ")" : ""}`, "",
+  const kopf = info.vermerk ? [info.vermerk, "=".repeat(info.vermerk.length), ""] : [];   // Kopfzeile mit dem Namen
+  const z = [...kopf, `${k.name}${k.name2 ? " (" + k.name2 + ")" : ""}`, "",
     `Adresse:        ${adresse(k)}, ${k.plz} ${k.ort}`, `Telefon:        ${k.tel || "-"}`,
     `Automat:        ${k.aut || "-"}${k.schl ? "  (Schlüssel " + k.schl + ")" : ""}`,
     `Typ:            ${k.typ || "-"}   Anbau: ${scText(k.sc)}   Turnus: ${k.turnus || "-"}`, "",
@@ -384,13 +385,46 @@ async function alsDatenUrl(blob, max) {
     return await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
   }
 }
-async function uebersichtBilder(plan, fortschritt) {
-  const bilder = {}, alle = [...plan.ja, ...plan.nein]; let n = 0;
+/* Mirko 03.11.2026: "auf jedem Dokument als Kopfzeile mein Name, damit es niemand als seine Idee
+   verkauft". Jedes Mass-Foto bekommt oben einen Balken mit dem Vermerk (aus der Kundenliste),
+   Kunde und Besichtigungstag - eingebrannt ins Bild, das Foto selbst bleibt unverdeckt. */
+async function stempeln(blob, zeilen) {
+  zeilen = zeilen.filter(Boolean);
+  if (!zeilen.length) return blob;
+  try {
+    const b = await createImageBitmap(blob, { imageOrientation: "from-image" });
+    const w = b.width; let fs = Math.max(22, Math.round(w * 0.034)); const pad = Math.round(fs * 0.55);
+    const c = document.createElement("canvas"), x = c.getContext("2d");
+    const schrift = (gr, fett) => `${fett ? "bold " : ""}${gr}px -apple-system, Helvetica, Arial, sans-serif`;
+    x.font = schrift(fs, true);   // Schrift so weit verkleinern, dass die laengste Zeile passt
+    while (fs > 14 && Math.max(...zeilen.map(t => x.measureText(t).width)) > w - 2 * pad) { fs -= 1; x.font = schrift(fs, true); }
+    const balken = pad * 2 + zeilen.length * fs + (zeilen.length - 1) * Math.round(fs * 0.35);
+    c.width = w; c.height = b.height + balken;
+    x.fillStyle = "#0f2a4a"; x.fillRect(0, 0, w, balken);
+    x.drawImage(b, 0, balken);
+    x.fillStyle = "#ffffff"; x.textBaseline = "top";
+    zeilen.forEach((t, i) => { x.font = schrift(fs, i === 0); x.fillText(t, pad, pad + i * Math.round(fs * 1.35)); });
+    return await new Promise(res => c.toBlob(r => res(r || blob), "image/jpeg", 0.88));
+  } catch (err) { return blob; }
+}
+async function stempelAlle(plan, fortschritt) {
+  const fertig = new Map(), alle = [...plan.ja, ...plan.nein]; let n = 0;
   const gesamt = alle.reduce((s, x) => s + x.medien.length, 0);
   for (const x of alle) {
+    const k = x.k, tage = besuchsTage(x.r).join(", ");
+    for (const m of x.medien) {
+      fertig.set(m.id, await stempeln(m.blob, [info.vermerk || "", `${k.nr} · ${k.name} · ${k.ort}${tage ? " · " + tage : ""}`]));
+      if (fortschritt) fortschritt(++n, gesamt);
+    }
+  }
+  return fertig;
+}
+async function uebersichtBilder(plan, stempel) {
+  const bilder = {};
+  for (const x of [...plan.ja, ...plan.nein]) {
     bilder[x.k.id] = [];
     // 1200 px: gross genug zum Vergroessern am PC, klein genug fuer einen Mail-Anhang
-    for (const m of x.medien) { bilder[x.k.id].push(await alsDatenUrl(m.blob, 1200)); if (fortschritt) fortschritt(++n, gesamt); }
+    for (const m of x.medien) bilder[x.k.id].push(await alsDatenUrl(stempel.get(m.id) || m.blob, 1200));
   }
   return bilder;
 }
@@ -435,7 +469,13 @@ details[open]{display:block;margin:6px 0}details[open] summary{cursor:zoom-out}
 details[open] img{width:auto;max-width:100%;height:auto;max-height:90vh;object-fit:contain}
 footer{color:#6b7280;font-size:13px;padding:6px 16px 24px;max-width:1150px;margin:0 auto}
 header .vermerk{font-size:12px;opacity:.7;margin-top:6px;font-style:italic}.besucht{font-size:13px;margin-top:2px}
+/* Kopfzeile mit dem Namen: als Tabellenkopf, den Browser beim Drucken auf JEDER Seite wiederholen */
+table.blatt{width:100%;border-collapse:collapse}table.blatt>thead>tr>td,table.blatt>tbody>tr>td{padding:0}
+.autor{background:#0b2038;color:#fff;font-size:13px;font-weight:600;padding:7px 20px;letter-spacing:.2px}
+@media print{.autor{background:#fff;color:#111;border-bottom:1px solid #9ca3af}header{background:#fff;color:#111;border-bottom:2px solid #0f2a4a}
+ body{background:#fff}.karte{break-inside:avoid}details img{width:80px;height:106px}}
 </style></head><body>
+<table class="blatt">${info.vermerk ? `<thead><tr><td><div class="autor">${esc(info.vermerk)} · ${esc(info.titel || "")}</div></td></tr></thead>` : ""}<tbody><tr><td>
 <header><h1>${esc(info.titel || "Standort-Besichtigung")}</h1>
 <div>Stand ${d.toLocaleDateString("de-DE")} · ${standorte(plan.ja.length + plan.nein.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage</div>
 ${info.vermerk || zeitraum(plan) ? `<div class="vermerk">${esc([info.vermerk, zeitraum(plan)].filter(Boolean).join(" · "))}</div>` : ""}</header>
@@ -445,7 +485,8 @@ ${info.auswahl ? `<p class="aus">${esc(info.auswahl)}</p>` : ""}
 <h2 class="ja">Kommt in Frage (${plan.ja.length})</h2>${abschnitt(plan.ja, "ja")}
 <h2 class="nein">Kommt nicht in Frage (${plan.nein.length})</h2>${abschnitt(plan.nein, "nein")}
 ${plan.offen.length ? `<h2>Noch nicht besichtigt (${plan.offen.length})</h2><p class="grau">${plan.offen.map(x => esc(x.k.name + " (" + x.k.ort + ")")).join(" · ")}</p>` : ""}
-</div><footer>In der ZIP liegt je Standort zusätzlich ein Ordner mit Steckbrief und den Maß-Fotos in voller Größe.${info.vermerk ? `<br>${esc(info.vermerk)}` : ""}</footer></body></html>`;
+</div><footer>In der ZIP liegt je Standort zusätzlich ein Ordner mit Steckbrief und den Maß-Fotos in voller Größe.${info.vermerk ? `<br>${esc(info.vermerk)}` : ""}</footer>
+</td></tr></tbody></table></body></html>`;
 }
 async function teilen(datei) {
   try {
@@ -461,7 +502,8 @@ async function uebersichtTeilen() {
   try {
     const plan = zipPlan(await medienAlle());
     if (!plan.ja.length && !plan.nein.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Nein“."); return; }
-    const bilder = await uebersichtBilder(plan, (n, g) => zeige(`Fotos werden eingefügt … ${n} / ${g}`, 20000));
+    const stempel = await stempelAlle(plan, (n, g) => zeige(`Fotos werden beschriftet … ${n} / ${g}`, 20000));
+    const bilder = await uebersichtBilder(plan, stempel);
     const datei = new File([uebersicht(plan, bilder)], `${sauber(info.titel || "Besichtigung")} – Übersicht ${heute()}.html`, { type: "text/html" });
     zeige("Übersicht fertig (" + mb(datei.size) + ")");
     await teilen(datei);
@@ -475,13 +517,14 @@ async function zipErstellen() {
     const plan = zipPlan(await medienAlle());
     if (!plan.ja.length && !plan.nein.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Nein“ – die ZIP wäre leer."); return; }
     const eintraege = [];
-    const bilder = await uebersichtBilder(plan, (n, g) => zeige(`Fotos werden eingefügt … ${n} / ${g}`, 20000));
+    const stempel = await stempelAlle(plan, (n, g) => zeige(`Fotos werden beschriftet … ${n} / ${g}`, 20000));
+    const bilder = await uebersichtBilder(plan, stempel);
     eintraege.push({ name: "Übersicht.html", blob: new Blob([uebersicht(plan, bilder)], { type: "text/html" }) });
     for (const gruppe of ["ja", "nein"]) for (const x of plan[gruppe]) {
       const basis = `${OBER[gruppe]}/${ordnerName(x.k)}/`;
       eintraege.push({ name: basis + "Steckbrief.txt", blob: new Blob(["﻿" + steckbrief(x.k, x.r)], { type: "text/plain" }) });
       const namen = dateiNamen(x.medien);
-      x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: m.blob }));
+      x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: stempel.get(m.id) || m.blob }));   // beschriftete Fassung
     }
     const zip = await zipBauen(eintraege, (n, g) => zeige(`ZIP wird erstellt … ${n} / ${g}`, 20000));
     const datei = new File([zip], `${sauber(info.titel || "Besichtigung")} ${heute()}.zip`, { type: "application/zip" });
@@ -632,7 +675,7 @@ function ansichtZip() {
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
   const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
-    <div class="karte"><div>📄 <b>Übersicht.html</b> – alle Standorte auf einen Blick, mit den Maß-Fotos (klein, antippen = groß)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}${info.vermerk ? `<div class="klein" style="margin-top:4px;font-style:italic">${esc(info.vermerk)}</div>` : ""}</div>
+    <div class="karte"><div>📄 <b>Übersicht.html</b> – alle Standorte auf einen Blick, mit den Maß-Fotos (klein, antippen = groß)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}${info.vermerk ? `<div class="klein" style="margin-top:4px">🔒 „${esc(info.vermerk)}“ steht als Kopfzeile auf der Übersicht (beim Drucken auf jeder Seite), in jedem Steckbrief und eingebrannt in jedem Maß-Foto.</div>` : ""}</div>
       <div class="klein" style="margin-top:6px">${standorte(plan.ja.length + plan.nein.length)} in der ZIP · ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht in der ZIP)` : ""}</div></div>
     <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
     <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur Übersicht teilen (eine Datei, mit Fotos)</button>
