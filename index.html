@@ -205,6 +205,16 @@ function jetzt() { return new Date().toISOString(); }
 function e(id) { if (!erg[id]) erg[id] = { besuche: [], rechtsCm: "", rechtsFrei: "", lage: "", merkmale: [], umfeld: "", inFrage: "", notiz: "", fertig: false };
   if (!erg[id].merkmale) erg[id].merkmale = []; return erg[id]; }
 function sichern(id) { if (id) erg[id].geaendert = jetzt(); schreiben(K_ERG, erg); }
+// Besichtigungstag mit Wochentag (Mirko 03.11.2026: Freizeit/Samstag nur als Denkanstoss -
+// sachlich ueber das Datum, ohne Kommentar). "Sa., 07.11.2026"
+function tag(iso, mitJahr) { return new Date(iso).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", ...(mitJahr ? { year: "numeric" } : {}) }); }
+function besuchsTage(r) { return [...new Set((r.besuche || []).map(b => tag(b.start, true)))]; }
+function zeitraum(plan) {
+  const alle = [...plan.ja, ...plan.nein].flatMap(x => (x.r.besuche || []).map(b => b.start)).sort();
+  if (!alle.length) return "";
+  const von = tag(alle[0], false), bis = tag(alle[alle.length - 1], true);
+  return tag(alle[0], true) === bis ? `Besichtigung ${bis}` : `Besichtigungen ${von} bis ${bis}`;
+}
 function uhr(iso) { const d = new Date(iso); return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) + " " +
   d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }); }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -239,6 +249,7 @@ document.getElementById("datei").addEventListener("change", ev => {
       kunden = liste; schreiben(K_KUNDEN, kunden);
       info.importiert = jetzt(); info.quelle = f.name;
       info.titel = d.titel || "Standort-Besichtigung"; info.auswahl = d.auswahl || "";
+      info.vermerk = d.vermerk || "";   // z. B. wer es ausgearbeitet hat - steht in der Datei, nicht im Programm
       schreiben(K_INFO, info);
       zeige(liste.length + " Standorte geladen.");
       ui.ansicht = "liste"; zeichnen();
@@ -354,7 +365,8 @@ function steckbrief(k, r) {
     `90-100 cm reichen: ${r.rechtsFrei || "-"}`, `Lage:           ${LAGE[r.lage] || "-"}`,
     `Umfeld:         ${umfeldText(r) || "-"}`, `Kommt in Frage: ${r.inFrage || "-"}`,
     `Notiz:          ${r.notiz || "-"}`, "",
-    `Besichtigt:     ${(r.besuche || []).map(b => uhr(b.start)).join(", ") || "-"}`];
+    `Besichtigt:     ${(r.besuche || []).map(b => tag(b.start, true) + " " + uhr(b.start).slice(-5)).join(", ") || "-"}`,
+    ...(info.vermerk ? ["", info.vermerk] : [])];
   return z.join("\r\n") + "\r\n";
 }
 /* Uebersicht = das End-Dokument. Mirko 03.11.2026: Mass-Fotos "klein drin, beim Andruecken groesser".
@@ -391,6 +403,7 @@ function uebersicht(plan, bilder) {
       <div class="grau">${esc(k.typ || "–")} · ${esc(scText(k.sc))} · Turnus ${esc(k.turnus || "–")}${k.aut ? " · " + esc(k.aut) : ""}</div>
       <div class="mass">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} <span class="reicht ${r.rechtsFrei === "ja" ? "ja" : r.rechtsFrei === "nein" ? "nein" : ""}">${r.rechtsFrei ? "90–100 cm reichen: " + esc(r.rechtsFrei) : ""}</span></div>
       <div class="lage">Lage: <b>${esc(LAGE[r.lage] || "–")}</b></div>
+      ${besuchsTage(r).length ? `<div class="grau besucht">Besichtigt: ${esc(besuchsTage(r).join(", "))}</div>` : ""}
       ${(r.merkmale || []).length || r.umfeld ? `<div class="umfeld">${(r.merkmale || []).map(m => `<span class="tag">${esc(m)}</span>`).join("")}${r.umfeld ? `<span class="frei">${esc(r.umfeld)}</span>` : ""}</div>` : ""}
       ${r.notiz ? `<div class="notiz">${esc(r.notiz)}</div>` : ""}
       ${fotos ? `<div class="fotos">${fotos}</div>` : `<div class="grau">kein Maß-Foto</div>`}
@@ -421,16 +434,18 @@ details img{display:block;width:104px;height:138px;object-fit:cover;border-radiu
 details[open]{display:block;margin:6px 0}details[open] summary{cursor:zoom-out}
 details[open] img{width:auto;max-width:100%;height:auto;max-height:90vh;object-fit:contain}
 footer{color:#6b7280;font-size:13px;padding:6px 16px 24px;max-width:1150px;margin:0 auto}
+header .vermerk{font-size:12px;opacity:.7;margin-top:6px;font-style:italic}.besucht{font-size:13px;margin-top:2px}
 </style></head><body>
 <header><h1>${esc(info.titel || "Standort-Besichtigung")}</h1>
-<div>Stand ${d.toLocaleDateString("de-DE")} · ${standorte(plan.ja.length + plan.nein.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage</div></header>
+<div>Stand ${d.toLocaleDateString("de-DE")} · ${standorte(plan.ja.length + plan.nein.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage</div>
+${info.vermerk || zeitraum(plan) ? `<div class="vermerk">${esc([info.vermerk, zeitraum(plan)].filter(Boolean).join(" · "))}</div>` : ""}</header>
 <div class="inhalt">
 ${info.auswahl ? `<p class="aus">${esc(info.auswahl)}</p>` : ""}
 <p class="grau">Benötigt werden rechts neben dem Automaten 90–100 cm. Maß-Fotos antippen bzw. anklicken zum Vergrößern, erneut zum Verkleinern.</p>
 <h2 class="ja">Kommt in Frage (${plan.ja.length})</h2>${abschnitt(plan.ja, "ja")}
 <h2 class="nein">Kommt nicht in Frage (${plan.nein.length})</h2>${abschnitt(plan.nein, "nein")}
 ${plan.offen.length ? `<h2>Noch nicht besichtigt (${plan.offen.length})</h2><p class="grau">${plan.offen.map(x => esc(x.k.name + " (" + x.k.ort + ")")).join(" · ")}</p>` : ""}
-</div><footer>In der ZIP liegt je Standort zusätzlich ein Ordner mit Steckbrief und den Maß-Fotos in voller Größe.</footer></body></html>`;
+</div><footer>In der ZIP liegt je Standort zusätzlich ein Ordner mit Steckbrief und den Maß-Fotos in voller Größe.${info.vermerk ? `<br>${esc(info.vermerk)}` : ""}</footer></body></html>`;
 }
 async function teilen(datei) {
   try {
@@ -617,7 +632,7 @@ function ansichtZip() {
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
   const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
-    <div class="karte"><div>📄 <b>Übersicht.html</b> – alle Standorte auf einen Blick, mit den Maß-Fotos (klein, antippen = groß)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}</div>
+    <div class="karte"><div>📄 <b>Übersicht.html</b> – alle Standorte auf einen Blick, mit den Maß-Fotos (klein, antippen = groß)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}${info.vermerk ? `<div class="klein" style="margin-top:4px;font-style:italic">${esc(info.vermerk)}</div>` : ""}</div>
       <div class="klein" style="margin-top:6px">${standorte(plan.ja.length + plan.nein.length)} in der ZIP · ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht in der ZIP)` : ""}</div></div>
     <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
     <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur Übersicht teilen (eine Datei, mit Fotos)</button>
