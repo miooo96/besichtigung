@@ -120,6 +120,8 @@
 <input type="file" id="wahlFoto" accept="image/*" multiple>
 <!-- Mass-Foto: Einzelauswahl = ein Tipp auf das neueste Foto genuegt (ohne "Hinzufuegen") -->
 <input type="file" id="wahlMass" accept="image/*">
+<!-- Sammel-Zuordnung: alle Massband-Fotos des Tages auf einmal -->
+<input type="file" id="wahlSammel" accept="image/*" multiple>
 <input type="file" id="wahlVideo" accept="video/*" multiple>
 
 <script>
@@ -282,10 +284,11 @@ async function dateienAufnehmen(dateien) {
   try {
     for (const f of dateien) {
       const istBild = f.type.startsWith("image/") || /\.(jpe?g|png|heic|heif)$/i.test(f.name);
+      const fp = await fingerabdruck(f);   // damit die Sammel-Zuordnung dasselbe Foto nicht doppelt nimmt
       const blob = istBild ? await verkleinern(f) : f;
       await medienSpeichern({ id: kid + "|" + Date.now() + "|" + Math.random().toString(36).slice(2, 7),
         kunde: kid, art, typ: blob.type || f.type || (istBild ? "image/jpeg" : "video/quicktime"),
-        name: f.name || "", blob, zeit: jetzt() });
+        name: f.name || "", blob, zeit: jetzt(), fp });
     }
     const r = e(kid); if (!r.besuche.length) r.besuche.push({ start: jetzt() }); sichern(kid);
     await ladeMedien(kid);
@@ -298,6 +301,136 @@ async function dateienAufnehmen(dateien) {
 }
 ["kamFoto", "kamVideo", "wahlFoto", "wahlVideo", "wahlMass"].forEach(id =>
   document.getElementById(id).addEventListener("change", ev => { const f = [...ev.target.files]; ev.target.value = ""; dateienAufnehmen(f); }));
+
+/* ================= Fotos zuordnen (Sammel-Zuordnung nach Uhrzeit) =================
+   Mirko 03.11.2026: "ich arbeite auf dem Handy mit der Aufnahme" - Massband-Fotos werden NICHT einzeln
+   hinzugefuegt, sondern abends alle auf einmal markiert. Jedes Foto geht zu dem Kunden, bei dem er zur
+   Aufnahmezeit war ("Ich bin da" bis "Fertig"). Unklares wird NICHT geraten: orange, Kunde selbst waehlen.
+   Aufnahmezeit: aus den Foto-Daten (EXIF/XMP), sonst Dateidatum - wenn beides fehlt: von Hand. */
+function exifDatum(s) {
+  const m = String(s).match(/(\d{4})[:-](\d{2})[:-](\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) : null;
+}
+function exifZeit(buf, t0) {   // t0 = Beginn des TIFF-Kopfs im JPEG
+  const le = buf[t0] === 0x49;
+  const u16 = o => le ? buf[t0 + o] | (buf[t0 + o + 1] << 8) : (buf[t0 + o] << 8) | buf[t0 + o + 1];
+  const u32 = o => (le ? (buf[t0 + o] | (buf[t0 + o + 1] << 8) | (buf[t0 + o + 2] << 16) | (buf[t0 + o + 3] << 24))
+                       : ((buf[t0 + o] << 24) | (buf[t0 + o + 1] << 16) | (buf[t0 + o + 2] << 8) | buf[t0 + o + 3])) >>> 0;
+  const ifd = o => { const t = {}, n = u16(o); for (let i = 0; i < n && i < 400; i++) { const e = o + 2 + i * 12; t[u16(e)] = { cnt: u32(e + 4), raw: e + 8 }; } return t; };
+  const text = x => { const off = x.cnt > 4 ? u32(x.raw) : x.raw; return String.fromCharCode(...buf.slice(t0 + off, t0 + off + x.cnt - 1)); };
+  const i0 = ifd(u32(4));
+  if (i0[0x8769]) { const ex = ifd(u32(i0[0x8769].raw)); const x = ex[0x9003] || ex[0x9004]; if (x) return exifDatum(text(x)); }
+  return i0[0x0132] ? exifDatum(text(i0[0x0132])) : null;
+}
+async function aufnahmeZeit(file) {
+  try {
+    const buf = new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer());
+    if (buf[0] === 0xFF && buf[1] === 0xD8) {          // JPEG: EXIF-Block suchen
+      let p = 2;
+      while (p + 10 < buf.length && buf[p] === 0xFF && buf[p + 1] !== 0xDA) {
+        const len = (buf[p + 2] << 8) | buf[p + 3];
+        if (buf[p + 1] === 0xE1 && buf[p + 4] === 0x45 && buf[p + 5] === 0x78 && buf[p + 6] === 0x69 && buf[p + 7] === 0x66) {
+          const t = exifZeit(buf, p + 10); if (t && !isNaN(t)) return { zeit: t, quelle: "Foto-Daten" };
+        }
+        p += 2 + len;
+      }
+    }
+    const txt = new TextDecoder("latin1").decode(buf);   // PNG/XMP und andere: Datum im Text
+    const x = txt.match(/(?:DateTimeOriginal|DateCreated|CreateDate)[^0-9]{0,40}(\d{4}[:-]\d{2}[:-]\d{2}[ T]\d{2}:\d{2}(?::\d{2})?)/);
+    if (x) { const t = exifDatum(x[1]); if (t) return { zeit: t, quelle: "Foto-Daten" }; }
+  } catch (err) { /* weiter mit Dateidatum */ }
+  if (file.lastModified && Math.abs(Date.now() - file.lastModified) > 3 * 60000)   // "jetzt" = Auswahlzeit, unbrauchbar
+    return { zeit: new Date(file.lastModified), quelle: "Dateidatum" };
+  return { zeit: null, quelle: "keine Uhrzeit" };
+}
+async function fingerabdruck(file) { const t = await aufnahmeZeit(file); return `${file.size}|${t.zeit ? t.zeit.getTime() : file.name}`; }
+function besuchsFenster() {
+  const f = [];
+  for (const k of kunden) for (const b of ((erg[k.id] || {}).besuche || []))
+    f.push({ kid: k.id, start: new Date(b.start), ende: b.ende ? new Date(b.ende) : new Date() });
+  return f;
+}
+function zuordnungVorschlag(zeit, fenster) {
+  if (!zeit) return { kid: "", sicher: false, grund: "keine Aufnahmezeit – bitte Kunden wählen" };
+  const PUFFER = 2 * 60000;
+  const drin = fenster.filter(w => zeit >= w.start - PUFFER && zeit <= w.ende.getTime() + PUFFER);
+  const kids = [...new Set(drin.map(w => w.kid))];
+  if (kids.length === 1) return { kid: kids[0], sicher: true, grund: "während des Besuchs" };
+  let best = null, abstand = Infinity;
+  for (const w of fenster) { const d = zeit < w.start ? w.start - zeit : Math.max(0, zeit - w.ende); if (d < abstand) { abstand = d; best = w; } }
+  if (kids.length > 1) return { kid: "", vorschlag: best && best.kid, sicher: false, grund: "mehrere Besuche zu dieser Zeit – bitte wählen" };
+  if (best && abstand <= 20 * 60000) return { kid: "", vorschlag: best.kid, sicher: false, grund: `${Math.round(abstand / 60000)} min neben dem Besuch – bitte prüfen` };
+  return { kid: "", sicher: false, grund: "kein Besuch zu dieser Zeit – bitte Kunden wählen" };
+}
+async function sammelLaden(dateien) {
+  if (!dateien.length) return;
+  zeige("Fotos werden gelesen …", 20000);
+  const fenster = besuchsFenster();
+  const schon = new Map((await medienAlle()).filter(m => m.fp).map(m => [m.fp, m.kunde]));
+  (ui.sammel || []).forEach(s => URL.revokeObjectURL(s.url));
+  ui.sammel = [];
+  for (const f of dateien) {
+    const t = await aufnahmeZeit(f), fp = `${f.size}|${t.zeit ? t.zeit.getTime() : f.name}`;
+    const v = zuordnungVorschlag(t.zeit, fenster);
+    const vorher = schon.get(fp);
+    ui.sammel.push({ datei: f, url: URL.createObjectURL(f), zeit: t.zeit, quelle: t.quelle, fp,
+      kid: vorher ? "" : v.kid, vorschlag: v.vorschlag || "", sicher: v.sicher && !vorher,
+      grund: vorher ? "schon übernommen bei " + ((kunden.find(k => k.id === vorher) || {}).name || "?") : v.grund });
+  }
+  ui.sammel.sort((a, b) => (a.zeit || 0) - (b.zeit || 0));
+  document.getElementById("meldung").style.display = "none";
+  ui.ansicht = "zuordnen"; zeichnen(); window.scrollTo(0, 0);
+}
+async function sammelUebernehmen() {
+  const liste = (ui.sammel || []).filter(s => s.kid);
+  if (!liste.length) { alert("Keinem Foto ist ein Kunde zugeordnet."); return; }
+  zeige("Wird gespeichert …", 20000);
+  try {
+    for (const s of liste) {
+      const blob = await verkleinern(s.datei);
+      await medienSpeichern({ id: s.kid + "|" + Date.now() + "|" + Math.random().toString(36).slice(2, 7), kunde: s.kid, art: "mass",
+        typ: blob.type || "image/jpeg", name: s.datei.name || "", blob, zeit: s.zeit ? s.zeit.toISOString() : jetzt(), fp: s.fp });
+    }
+    const n = liste.length, kz = new Set(liste.map(s => s.kid)).size;
+    ui.sammel.forEach(s => URL.revokeObjectURL(s.url)); ui.sammel = null;
+    Object.keys(cache).forEach(k => delete cache[k]);
+    ui.ansicht = "liste"; zeichnen();
+    zeige(`${n} Foto(s) bei ${kz} Kunden hinterlegt ✓`, 3500);
+  } catch (err) { alert("Speichern hat nicht geklappt: " + (err && err.message || err)); }
+}
+document.getElementById("wahlSammel").addEventListener("change", ev => { const f = [...ev.target.files]; ev.target.value = ""; sammelLaden(f); });
+document.addEventListener("change", ev => {
+  if (ev.target.matches && ev.target.matches("select[data-sammel]")) {
+    const s = ui.sammel && ui.sammel[+ev.target.dataset.sammel]; if (s) { s.kid = ev.target.value; zeichnen(); }
+  }
+});
+function ansichtZuordnen() {
+  const S = ui.sammel || [];
+  const besucht = kunden.filter(k => ((erg[k.id] || {}).besuche || []).length)
+    .sort((a, b) => erg[a.id].besuche[0].start.localeCompare(erg[b.id].besuche[0].start));
+  const rest = kunden.filter(k => !besucht.includes(k));
+  const opt = (k, sel) => `<option value="${esc(k.id)}" ${sel === k.id ? "selected" : ""}>${esc(k.nr)} ${esc(k.name)}</option>`;
+  const sicher = S.filter(s => s.kid && s.sicher).length, gewaehlt = S.filter(s => s.kid).length;
+  return `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="liste">‹ Liste</button></div><h1>Fotos zuordnen</h1>
+    <div class="unter">${S.length} Foto(s) · ${sicher} sicher zugeordnet · ${S.length - sicher} bitte prüfen</div></div>
+  <main>
+    <div class="hinweis">Jedes Foto geht zu dem Kunden, bei dem Sie zur Aufnahmezeit waren („Ich bin da“ bis „Fertig“). <b>Orange</b> = bitte selbst prüfen bzw. wählen.</div>
+    ${S.map((s, i) => { const vk = s.vorschlag && kunden.find(k => k.id === s.vorschlag);
+      return `<div class="karte" style="display:flex;gap:12px;align-items:flex-start;${s.kid && s.sicher ? "" : "border:2px solid #f59e0b;background:#fffbeb"}">
+      <img src="${s.url}" alt="" style="width:76px;height:100px;object-fit:cover;border-radius:8px;border:1px solid #d1d5db;flex:none">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:650">${s.zeit ? esc(tag(s.zeit.toISOString(), false) + " " + uhr(s.zeit.toISOString()).slice(-5)) : "ohne Uhrzeit"}</div>
+        <div class="klein">${esc(s.grund)}${s.zeit ? " · Zeit aus: " + esc(s.quelle) : ""}</div>
+        ${vk ? `<div class="klein" style="color:var(--orange)">Vorschlag: ${esc(vk.nr + " " + vk.name)}</div>` : ""}
+        <select data-sammel="${i}" style="width:100%;font-size:16px;padding:9px;margin-top:6px;border-radius:10px;border:1px solid #d1d5db">
+          <option value="">— nicht übernehmen —</option>
+          ${besucht.length ? `<optgroup label="Besucht">${besucht.map(k => opt(k, s.kid)).join("")}</optgroup>` : ""}
+          <optgroup label="Alle anderen">${rest.map(k => opt(k, s.kid)).join("")}</optgroup>
+        </select></div></div>`; }).join("")}
+  </main>
+  <div class="fuss"><button data-akt="liste">Abbrechen</button>
+    <button class="fertig" data-akt="sammelok" ${gewaehlt ? "" : "disabled"}>Übernehmen (${gewaehlt})</button></div>`;
+}
 
 /* ================= ZIP (ohne Komprimierung - Fotos/Videos sind schon komprimiert) ================= */
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n;
@@ -644,6 +777,7 @@ function zeichnen() {
   if (ui.ansicht === "kunde") return app.innerHTML = ansichtKunde();
   if (ui.ansicht === "mehr") return app.innerHTML = ansichtMehr();
   if (ui.ansicht === "zip") return app.innerHTML = ansichtZip();
+  if (ui.ansicht === "zuordnen") return app.innerHTML = ansichtZuordnen();
   app.innerHTML = ansichtListe();
   const s = document.getElementById("suche");
   if (s && ui.fokus) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
@@ -680,7 +814,8 @@ function ansichtListe() {
   <main>
     <div class="suche"><input id="suche" type="search" placeholder="Name, Ort, Straße, Aut-Nr. …" value="${esc(ui.suche)}" autocomplete="off"></div>
     ${hatGruppen ? `<div class="filter">${gchip("woche", "Diese Woche")}${gchip("samstag", "Samstag")}${gchip("alle", "Alle")}</div>` : ""}
-    <div class="filter"><button class="chip ${ui.nurOffen ? "an" : ""}" data-akt="nuroffen">Nur offene</button></div>
+    <div class="filter"><button class="chip ${ui.nurOffen ? "an" : ""}" data-akt="nuroffen">Nur offene</button>
+      <button class="chip" data-akt="sammeln" style="border-color:var(--blau2);color:var(--blau2);font-weight:650">📷 Fotos zuordnen</button></div>
     <div class="stand">${treffer.length} angezeigt · ${hatGruppen ? "W = diese Woche auf der Tour · 1, 2, 3 … = Samstagsroute" : "Nummer = Fahrreihenfolge"}</div>
     ${treffer.map(k => { const s = status(k.id); return `
       <button class="kunde" data-akt="oeffnen" data-id="${esc(k.id)}">
@@ -697,6 +832,8 @@ function ansichtMehr() {
   <main>
     <div class="karte"><b>ZIP für den Chef</b><p class="klein">Vorschau ansehen und als ZIP auf dem iPhone sichern („In Dateien sichern“) oder weitergeben. Abends einmal sichern – das ist zugleich Ihre Sicherung der Fotos.</p>
       <button class="gross start" data-akt="zip">ZIP-Vorschau</button></div>
+    <div class="karte"><b>Maßband-Fotos zuordnen</b><p class="klein">Abends alle Maßband-Fotos des Tages auf einmal markieren. Jedes Foto geht zu dem Kunden, bei dem Sie zur Aufnahmezeit waren („Ich bin da“ bis „Fertig“). Vor dem Übernehmen sehen Sie die Zuordnung, Unklares ist orange.</p>
+      <button class="gross start" data-akt="sammeln">📷 Fotos zuordnen</button></div>
     <div class="karte"><b>Ergebnisse an den Mac</b><p class="klein">Nur die Angaben (ohne Fotos) als kleine Datei, z. B. per AirDrop.</p>
       <button class="knopf2" data-akt="senden">Ergebnisse senden</button></div>
     <div class="karte"><b>Kundenliste</b><p class="klein">${kunden.length} Standorte${info.importiert ? ", geladen am " + uhr(info.importiert) : ""}. Ihre Angaben und Fotos bleiben beim Neuladen erhalten.</p>
@@ -801,7 +938,8 @@ function ansichtKunde() {
       ${hatDaten(r) || n("mass") ? `<button class="knopf2" data-akt="kundeweg" style="margin-top:14px;color:var(--rot);border-color:#fca5a5">Diesen Kunden zurücksetzen</button>` : ""}</div>`;
   } else if (s === 1) {
     inhalt = `<div class="schritt"><h3>2. Maß rechts</h3>
-      <div class="hinweis">In der App <b>Maßband</b> vom <b>rechten Rand des Automaten</b> nach rechts messen, Auslöser drücken und das Bild in Fotos sichern. Automat und Messlinie sollen auf dem Bild sein. Benötigt: <b>90–100 cm</b>.</div>
+      <div class="hinweis">In der App <b>Maßband</b> vom <b>rechten Rand des Automaten</b> nach rechts messen, Auslöser drücken und das Bild in Fotos sichern. Automat und Messlinie sollen auf dem Bild sein. Benötigt: <b>90–100 cm</b>.<br>
+        <span class="klein">Hinzufügen ist nicht nötig: abends unter „📷 Fotos zuordnen“ alle Fotos auf einmal – sie landen über die Uhrzeit beim richtigen Kunden.</span></div>
       ${ui.massOffen === k.id
         // Mirko 03.11.2026: Foto soll ohne Umweg beim Kunden landen. iOS laesst eine Webseite nicht selbst
         // in die Fotos greifen - deshalb nach der Rueckkehr vom Massband: Uebernehmen-Knopf ganz oben, ein Tipp.
@@ -871,6 +1009,8 @@ document.addEventListener("click", async ev => {
   if (akt === "senden") return senden();
   if (akt === "zipbauen") return zipErstellen();
   if (akt === "uebersicht") return uebersichtTeilen();
+  if (akt === "sammeln") return document.getElementById("wahlSammel").click();
+  if (akt === "sammelok") return sammelUebernehmen();
   if (akt === "allesweg") return allesZuruecksetzen();
   if (akt === "kundeweg") return kundeZuruecksetzen(ui.id);
   if (akt === "aufnehmen") {   // muss direkt im Klick passieren, sonst blockiert iOS die Kamera
