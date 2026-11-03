@@ -11,13 +11,12 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <title>Besichtigung</title>
 <!--
-  Standort-Besichtigung - Schritt fuer Schritt je Standort.
+  Standort-Besichtigung - Schritt fuer Schritt je Standort, mit Fotos, Video
+  und ZIP zum Weitergeben.
   WICHTIG: In diesem Programm stehen KEINE Kundendaten. Die Liste wird auf
-  dem Handy aus einer Datei geladen (AirDrop) und bleibt nur dort
-  (localStorage dieser Seite). Nichts wird an einen Server geschickt.
-  Fotos/Videos entstehen mit der normalen Kamera; das Werkzeug merkt sich
-  die Uhrzeit von "Ich bin da" bis "Fertig" - darueber werden die Aufnahmen
-  spaeter auf dem Mac zugeordnet.
+  dem Handy aus einer Datei geladen (AirDrop) und bleibt nur dort.
+  Angaben: localStorage dieser Seite. Fotos/Videos: IndexedDB dieser Seite.
+  Nichts wird an einen Server geschickt - die ZIP entsteht auf dem Geraet.
 -->
 <style>
   :root {
@@ -38,7 +37,7 @@
   .suche { display: flex; gap: 8px; margin-bottom: 10px; }
   .suche input { flex: 1; font-size: 17px; padding: 11px 12px; border: 1px solid #d1d5db; border-radius: 10px; }
   .filter { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-  .chip { border: 1px solid #d1d5db; background: #fff; border-radius: 999px; padding: 7px 13px; font-size: 15px; }
+  .chip { border: 1px solid #d1d5db; background: #fff; border-radius: 999px; padding: 7px 13px; font-size: 15px; color: var(--text); }
   .chip.an { background: var(--blau); color: #fff; border-color: var(--blau); }
   .stand { font-size: 14px; color: var(--grau); margin: 0 2px 8px; }
   .kunde { display: flex; gap: 12px; align-items: center; background: #fff; border-radius: 12px;
@@ -67,28 +66,38 @@
   .hinweis { font-size: 15px; color: #374151; background: #eef2ff; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
   .gross { display: block; width: 100%; font-size: 19px; font-weight: 650; padding: 16px; border-radius: 12px;
     border: 2px solid #d1d5db; background: #fff; color: var(--text); margin-bottom: 10px; }
-  .gross.haken { border-color: var(--gruen); background: var(--gruen-hell); color: var(--gruen); }
   .gross.start { background: var(--blau); border-color: var(--blau); color: #fff; }
+  .gross.haken { border-color: var(--gruen); background: var(--gruen-hell); color: var(--gruen); }
+  .knopf2 { font-size: 16px; padding: 12px; border-radius: 10px; border: 1px solid #d1d5db; background: #fff; width: 100%; margin-bottom: 8px; color: var(--text); }
   .janein { display: flex; gap: 10px; margin-bottom: 12px; }
-  .janein button { flex: 1; font-size: 20px; font-weight: 700; padding: 18px 0; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; }
+  .janein button { flex: 1; font-size: 20px; font-weight: 700; padding: 18px 0; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; color: var(--text); }
   .janein button.ja.an { background: var(--gruen); border-color: var(--gruen); color: #fff; }
   .janein button.nein.an { background: var(--rot); border-color: var(--rot); color: #fff; }
   label.feld { display: block; font-size: 15px; color: #374151; margin: 4px 0 6px; }
   input.cm { width: 100%; font-size: 24px; padding: 12px; border-radius: 12px; border: 2px solid #d1d5db; text-align: center; margin-bottom: 12px; }
   textarea { width: 100%; min-height: 150px; font: inherit; padding: 12px; border-radius: 12px; border: 2px solid #d1d5db; }
+  .bilder { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 12px; }
+  .bild { position: relative; aspect-ratio: 3/4; border-radius: 10px; overflow: hidden; background: #e5e7eb; border: 1px solid var(--linie); }
+  .bild img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .bild .vid { display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; font-size: 30px; color: #374151; }
+  .bild .vid small { font-size: 12px; margin-top: 4px; }
+  .bild button.weg { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; border-radius: 16px; border: 0;
+    background: #111827cc; color: #fff; font-size: 18px; line-height: 32px; padding: 0; }
   .fuss { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid var(--linie);
     padding: 10px 12px calc(env(safe-area-inset-bottom) + 10px); display: flex; gap: 10px; z-index: 6; }
-  .fuss button { flex: 1; font-size: 18px; font-weight: 650; padding: 14px; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; }
+  .fuss button { flex: 1; font-size: 18px; font-weight: 650; padding: 14px; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; color: var(--text); }
   .fuss button.weiter { background: var(--blau); border-color: var(--blau); color: #fff; }
   .fuss button.fertig { background: var(--gruen); border-color: var(--gruen); color: #fff; }
-  .zusammen { list-style: none; } .zusammen li { margin-bottom: 4px; } .fehlt { color: var(--orange); font-weight: 650; } .ok { color: var(--gruen); }
+  .zusammen { list-style: none; margin: 0; padding: 0; } .zusammen li { margin-bottom: 4px; }
+  .fehlt { color: var(--orange); font-weight: 650; } .ok { color: var(--gruen); }
   .zeiten { font-size: 13px; color: var(--grau); margin-top: 8px; }
-  .leer { text-align: center; padding: 30px 16px; }
-  .leer p { color: #374151; }
+  .leer { text-align: center; padding: 30px 16px; } .leer p { color: #374151; }
   .klein { font-size: 13px; color: var(--grau); }
-  .rand { margin-top: 22px; }
-  .knopf2 { font-size: 16px; padding: 12px; border-radius: 10px; border: 1px solid #d1d5db; background: #fff; width: 100%; margin-bottom: 8px; }
-  /* Meldung oben unter dem Kopf und nicht antippbar: sie lag am 03.11. im Test ueber "Ich bin da" */
+  .ordner { font-weight: 700; font-size: 17px; margin: 16px 2px 8px; }
+  .zipkunde .titel { font-weight: 650; } .zipkunde .datei { font-size: 13px; color: #374151; }
+  .zipkunde .mini { display: flex; gap: 6px; margin: 8px 0 4px; flex-wrap: wrap; }
+  .zipkunde .mini img, .zipkunde .mini span { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: #e5e7eb;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 22px; }
   .meldung { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 74px); background: #111827ee; color: #fff;
     padding: 10px 14px; border-radius: 12px; font-size: 15px; z-index: 20; display: none; pointer-events: none; text-align: center; }
   input[type=file] { display: none; }
@@ -98,10 +107,15 @@
 <div id="app"></div>
 <div class="meldung" id="meldung"></div>
 <input type="file" id="datei" accept=".json,application/json">
+<!-- Kamera direkt (capture) und Auswahl aus der Fotos-App (ohne capture) -->
+<input type="file" id="kamFoto" accept="image/*" capture="environment">
+<input type="file" id="kamVideo" accept="video/*" capture="environment">
+<input type="file" id="wahlFoto" accept="image/*" multiple>
+<input type="file" id="wahlVideo" accept="video/*" multiple>
 
 <script>
 "use strict";
-/* ---------- Speicher (nur auf diesem Geraet) ---------- */
+/* ================= Speicher (nur auf diesem Geraet) ================= */
 const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
 const lesen = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const schreiben = (k, v) => localStorage.setItem(k, JSON.stringify(v));
@@ -111,13 +125,62 @@ let info = lesen(K_INFO, {});
 // Gruppen (Mirko 03.11.2026): "woche" = diese Woche auf der normalen Tour (Nr. W1 ...),
 // "samstag" = Rest am Samstag (Nr. 1 ... = Samstagsroute). Auswahl wird gemerkt.
 const ui = { ansicht: "liste", id: null, schritt: 0, suche: "", nurOffen: false,
-  gruppe: lesen("bes.gruppe", "woche") };
+  gruppe: lesen("bes.gruppe", "woche"), ziel: null, zipLaeuft: false };
 
-const SCHRITTE = ["Ankommen", "Foto frontal", "Zollstock rechts", "Video", "Kommt in Frage?", "Notiz", "Abschluss"];
+/* Fotos und Videos: IndexedDB "besichtigung-medien", Speicher "medien"
+   { id, kunde, art: "front" | "mass" | "video", typ, name, blob, zeit } */
+const DB = { name: "besichtigung-medien", version: 1, offen: null };
+function db() {
+  if (DB.offen) return DB.offen;
+  DB.offen = new Promise((res, rej) => {
+    const r = indexedDB.open(DB.name, DB.version);
+    r.onupgradeneeded = () => {
+      const s = r.result.createObjectStore("medien", { keyPath: "id" });
+      s.createIndex("kunde", "kunde");
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  return DB.offen;
+}
+async function tx(modus, fn) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const t = d.transaction("medien", modus); const s = t.objectStore("medien");
+    let ergebnis; Promise.resolve(fn(s)).then(v => ergebnis = v, () => {});   // Fehler meldet t.onerror
+    t.oncomplete = () => res(ergebnis); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+  });
+}
+const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+// Normal: Datei (Blob) speichern - Safari legt sie als Datei ab, das schont den Arbeitsspeicher.
+// Ausweg: In privaten Fenstern lehnt Safari Blobs ab ("Error preparing Blob/File data",
+// im Test am 03.11. gesehen) -> dann als ArrayBuffer speichern.
+async function medienSpeichern(m) {
+  try { return await tx("readwrite", s => req(s.put(m))); }
+  catch (err) {
+    const { blob, ...rest } = m;
+    const daten = await blob.arrayBuffer();   // vorher lesen: ein await in der Transaktion wuerde sie beenden
+    return tx("readwrite", s => req(s.put({ ...rest, daten })));
+  }
+}
+const alsBlob = m => { if (!m.blob && m.daten) m.blob = new Blob([m.daten], { type: m.typ }); return m; };
+const medienLoeschen = id => tx("readwrite", s => req(s.delete(id)));
+const medienVon = kid => tx("readonly", s => req(s.index("kunde").getAll(kid))).then(l => l.map(alsBlob));
+const medienAlle = () => tx("readonly", s => req(s.getAll())).then(l => l.map(alsBlob));
+
+// Vorschau-Adressen je Kunde (werden beim Wechsel freigegeben)
+const cache = {};   // kid -> [{id, art, typ, groesse, url}]
+async function ladeMedien(kid) {
+  const liste = (await medienVon(kid)).sort((a, b) => a.zeit.localeCompare(b.zeit));
+  (cache[kid] || []).forEach(m => m.url && URL.revokeObjectURL(m.url));
+  cache[kid] = liste.map(m => ({ id: m.id, art: m.art, typ: m.typ, groesse: m.blob.size,
+    url: m.typ.startsWith("image/") ? URL.createObjectURL(m.blob) : null }));
+  return cache[kid];
+}
+const SCHRITTE = ["Ankommen", "Foto frontal", "Maß rechts", "Video", "Kommt in Frage?", "Notiz", "Abschluss"];
 
 function jetzt() { return new Date().toISOString(); }
-function e(id) { if (!erg[id]) erg[id] = { besuche: [], fotoFront: false, fotoZoll: false, video: false,
-  rechtsCm: "", rechtsFrei: "", inFrage: "", notiz: "", fertig: false }; return erg[id]; }
+function e(id) { if (!erg[id]) erg[id] = { besuche: [], rechtsCm: "", rechtsFrei: "", inFrage: "", notiz: "", fertig: false }; return erg[id]; }
 function sichern(id) { if (id) erg[id].geaendert = jetzt(); schreiben(K_ERG, erg); }
 function uhr(iso) { const d = new Date(iso); return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) + " " +
   d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }); }
@@ -125,8 +188,12 @@ function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ 
 function norm(s) { return String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/ß/g, "ss"); }
 function scKlasse(sc) { return sc === "SC 200" ? "s200" : sc === "SC 20-02" ? "s2002" : "sx"; }
 function scText(sc) { return /^SC/.test(sc || "") ? sc : "SC ?"; }
-function zeige(text) { const m = document.getElementById("meldung"); m.textContent = text; m.style.display = "block";
-  clearTimeout(zeige.t); zeige.t = setTimeout(() => m.style.display = "none", 2600); }
+function mb(b) { return (b / 1048576).toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " MB"; }
+function adresse(k) { return (k.strasse + " " + (k.hnr || "")).trim(); }
+function standorte(n) { return n + (n === 1 ? " Standort" : " Standorte"); }
+function zeige(text, ms) { const m = document.getElementById("meldung"); m.textContent = text; m.style.display = "block";
+  clearTimeout(zeige.t); zeige.t = setTimeout(() => m.style.display = "none", ms || 2600); }
+function anzahl(kid, art) { return (cache[kid] || []).filter(m => m.art === art).length; }
 
 function status(id) {
   const r = erg[id];
@@ -137,7 +204,7 @@ function status(id) {
   return { k: "ja", t: "✓ fertig" };
 }
 
-/* ---------- Liste laden ---------- */
+/* ================= Liste laden ================= */
 document.getElementById("datei").addEventListener("change", ev => {
   const f = ev.target.files[0]; if (!f) return;
   const r = new FileReader();
@@ -147,7 +214,9 @@ document.getElementById("datei").addEventListener("change", ev => {
       const liste = Array.isArray(d) ? d : d.kunden;
       if (!Array.isArray(liste) || !liste.length || !liste.every(k => k.id && k.name)) throw new Error("Format");
       kunden = liste; schreiben(K_KUNDEN, kunden);
-      info.importiert = jetzt(); info.quelle = f.name; schreiben(K_INFO, info);
+      info.importiert = jetzt(); info.quelle = f.name;
+      info.titel = d.titel || "Standort-Besichtigung"; info.auswahl = d.auswahl || "";
+      schreiben(K_INFO, info);
       zeige(liste.length + " Standorte geladen.");
       ui.ansicht = "liste"; zeichnen();
     } catch (err) { alert("Diese Datei ist keine passende Kundenliste."); }
@@ -156,11 +225,168 @@ document.getElementById("datei").addEventListener("change", ev => {
   r.readAsText(f);
 });
 
-/* ---------- Ergebnisse senden (AirDrop / Teilen) ---------- */
+/* ================= Fotos / Videos aufnehmen ================= */
+// Fotos werden auf max. 2400 px verkleinert (gute Bildschirmqualitaet, kleine ZIP).
+async function verkleinern(datei) {
+  try {
+    const bild = await createImageBitmap(datei, { imageOrientation: "from-image" });
+    const f = Math.min(1, 2400 / Math.max(bild.width, bild.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bild.width * f); c.height = Math.round(bild.height * f);
+    c.getContext("2d").drawImage(bild, 0, 0, c.width, c.height);
+    const blob = await new Promise(res => c.toBlob(res, "image/jpeg", 0.85));
+    return blob || datei;
+  } catch (err) { return datei; }
+}
+async function dateienAufnehmen(dateien) {
+  const kid = ui.id, art = ui.ziel; if (!kid || !art || !dateien.length) return;
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  zeige("Wird gespeichert …", 20000);
+  try {
+    for (const f of dateien) {
+      const istBild = f.type.startsWith("image/") || /\.(jpe?g|png|heic|heif)$/i.test(f.name);
+      const blob = istBild ? await verkleinern(f) : f;
+      await medienSpeichern({ id: kid + "|" + Date.now() + "|" + Math.random().toString(36).slice(2, 7),
+        kunde: kid, art, typ: blob.type || f.type || (istBild ? "image/jpeg" : "video/quicktime"),
+        name: f.name || "", blob, zeit: jetzt() });
+    }
+    const r = e(kid); if (!r.besuche.length) r.besuche.push({ start: jetzt() }); sichern(kid);
+    await ladeMedien(kid);
+    zeige(dateien.length === 1 ? "Gespeichert ✓" : dateien.length + " Dateien gespeichert ✓");
+  } catch (err) {
+    alert("Speichern hat nicht geklappt: " + (err && err.message || err) + "\nBitte noch einmal versuchen.");
+  }
+  zeichnen();
+}
+["kamFoto", "kamVideo", "wahlFoto", "wahlVideo"].forEach(id =>
+  document.getElementById(id).addEventListener("change", ev => { const f = [...ev.target.files]; ev.target.value = ""; dateienAufnehmen(f); }));
+
+/* ================= ZIP (ohne Komprimierung - Fotos/Videos sind schon komprimiert) ================= */
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(bytes, c) { c = c ^ 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+async function crcBlob(blob) {   // stueckweise, damit grosse Videos den Speicher nicht sprengen
+  let c = 0; const STUECK = 8 * 1048576;
+  for (let o = 0; o < blob.size; o += STUECK) c = crc32(new Uint8Array(await blob.slice(o, o + STUECK).arrayBuffer()), c);
+  return c;
+}
+function dosZeit(d) { return { zeit: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1),
+  datum: ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate() }; }
+async function zipBauen(eintraege, fortschritt) {   // eintraege: [{name, blob}]
+  const enc = new TextEncoder(), teile = [], zentral = []; let pos = 0; const z = dosZeit(new Date());
+  for (let i = 0; i < eintraege.length; i++) {
+    const { name, blob } = eintraege[i]; const nb = enc.encode(name);
+    const crc = await crcBlob(blob); const gr = blob.size;
+    if (pos + gr > 0xFFFFFFFF) throw new Error("ZIP wäre größer als 4 GB");
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+    lh.setUint16(10, z.zeit, true); lh.setUint16(12, z.datum, true); lh.setUint32(14, crc, true);
+    lh.setUint32(18, gr, true); lh.setUint32(22, gr, true); lh.setUint16(26, nb.length, true); lh.setUint16(28, 0, true);
+    teile.push(lh.buffer, nb, blob);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+    ch.setUint16(10, 0, true); ch.setUint16(12, z.zeit, true); ch.setUint16(14, z.datum, true); ch.setUint32(16, crc, true);
+    ch.setUint32(20, gr, true); ch.setUint32(24, gr, true); ch.setUint16(28, nb.length, true);
+    ch.setUint16(30, 0, true); ch.setUint16(32, 0, true); ch.setUint16(34, 0, true); ch.setUint16(36, 0, true);
+    ch.setUint32(38, 0, true); ch.setUint32(42, pos, true);
+    zentral.push(ch.buffer, nb);
+    pos += 30 + nb.length + gr;
+    if (fortschritt) fortschritt(i + 1, eintraege.length);
+  }
+  const zgr = zentral.reduce((s, t) => s + t.byteLength, 0);
+  const ende = new DataView(new ArrayBuffer(22));
+  ende.setUint32(0, 0x06054b50, true); ende.setUint16(8, eintraege.length, true); ende.setUint16(10, eintraege.length, true);
+  ende.setUint32(12, zgr, true); ende.setUint32(16, pos, true);
+  return new Blob([...teile, ...zentral, ende.buffer], { type: "application/zip" });
+}
+
+/* Inhalt der ZIP: wer bewertet ist (kommt in Frage ja/nein), Ordner je Kunde */
+const sauber = s => String(s || "").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+function zipPlan(medienListe) {
+  const proKunde = {}; medienListe.forEach(m => (proKunde[m.kunde] = proKunde[m.kunde] || []).push(m));
+  const plan = { ja: [], nein: [], offen: [] };
+  for (const k of kunden) {
+    const r = erg[k.id] || {}; const m = (proKunde[k.id] || []).sort((a, b) => a.zeit.localeCompare(b.zeit));
+    const eintrag = { k, r, medien: m };
+    if (r.inFrage === "ja") plan.ja.push(eintrag); else if (r.inFrage === "nein") plan.nein.push(eintrag); else plan.offen.push(eintrag);
+  }
+  return plan;
+}
+function ordnerName(k) { return sauber(`${k.nr} ${k.name} - ${k.ort}`); }
+const OBER = { ja: "1 Kommt in Frage", nein: "2 Kommt nicht in Frage" };
+const ART_NAME = { front: "Foto frontal", mass: "Maß rechts", video: "Video" };
+function dateiNamen(medien) {
+  const zaehl = {};
+  return medien.map(m => { zaehl[m.art] = (zaehl[m.art] || 0) + 1;
+    const end = m.typ.startsWith("image/") ? (m.typ.includes("png") ? "png" : "jpg") : (m.typ.includes("mp4") ? "mp4" : "mov");
+    return `${ART_NAME[m.art] || m.art} ${zaehl[m.art]}.${end}`; });
+}
+function steckbrief(k, r) {
+  const z = [`${k.name}${k.name2 ? " (" + k.name2 + ")" : ""}`, "",
+    `Adresse:        ${adresse(k)}, ${k.plz} ${k.ort}`, `Telefon:        ${k.tel || "-"}`,
+    `Automat:        ${k.aut || "-"}${k.schl ? "  (Schlüssel " + k.schl + ")" : ""}`,
+    `Typ:            ${k.typ || "-"}   Anbau: ${scText(k.sc)}   Turnus: ${k.turnus || "-"}`, "",
+    `Rechts frei:    ${r.rechtsCm ? r.rechtsCm + " cm" : "-"}`,
+    `90-100 cm reichen: ${r.rechtsFrei || "-"}`, `Kommt in Frage: ${r.inFrage || "-"}`,
+    `Notiz:          ${r.notiz || "-"}`, "",
+    `Besichtigt:     ${(r.besuche || []).map(b => uhr(b.start)).join(", ") || "-"}`];
+  return z.join("\r\n") + "\r\n";
+}
+function uebersicht(plan) {
+  const zeile = (x, gruppe) => { const k = x.k, r = x.r;
+    const pfad = encodeURI(`${OBER[gruppe]}/${ordnerName(k)}/`);
+    return `<tr><td>${esc(k.nr)}</td><td><a href="${pfad}">${esc(k.name)}</a>${k.name2 ? "<br><small>" + esc(k.name2) + "</small>" : ""}</td>
+      <td>${esc(adresse(k))}<br><small>${esc(k.plz)} ${esc(k.ort)}</small></td><td>${esc(k.typ)}<br><small>${esc(scText(k.sc))} · ${esc(k.turnus)}</small></td>
+      <td style="text-align:center">${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"}<br><small>reicht: ${esc(r.rechtsFrei || "–")}</small></td>
+      <td>${esc(r.notiz || "")}</td><td style="text-align:center">${x.medien.length}</td></tr>`; };
+  const tabelle = (liste, gruppe) => liste.length ? `<table><tr><th>Nr.</th><th>Kunde / Dulder</th><th>Adresse</th><th>Typ / Anbau</th><th>Rechts frei</th><th>Notiz</th><th>Dateien</th></tr>
+    ${liste.map(x => zeile(x, gruppe)).join("")}</table>` : "<p>–</p>";
+  const d = new Date();
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>${esc(info.titel || "Übersicht")}</title>
+<style>body{font:15px/1.4 Arial,sans-serif;margin:24px;color:#111}h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:24px 0 8px}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:6px 8px;vertical-align:top;text-align:left}
+th{background:#f3f4f6}small{color:#4b5563}.ja{color:#047857}.nein{color:#b91c1c}.aus{font-style:italic;margin:6px 0 14px}</style></head><body>
+<h1>${esc(info.titel || "Standort-Besichtigung")}</h1>
+<div>Stand ${d.toLocaleDateString("de-DE")} · ${standorte(plan.ja.length + plan.nein.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage</div>
+${info.auswahl ? `<p class="aus">${esc(info.auswahl)}</p>` : ""}
+<h2 class="ja">Kommt in Frage (${plan.ja.length})</h2>${tabelle(plan.ja, "ja")}
+<h2 class="nein">Kommt nicht in Frage (${plan.nein.length})</h2>${tabelle(plan.nein, "nein")}
+${plan.offen.length ? `<h2>Noch nicht besichtigt (${plan.offen.length})</h2><p>${plan.offen.map(x => esc(x.k.name + " (" + x.k.ort + ")")).join(" · ")}</p>` : ""}
+<p><small>Je Standort ein Ordner mit Steckbrief, Fotos (frontal, Maß rechts) und Video.</small></p></body></html>`;
+}
+async function zipErstellen() {
+  if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
+  try {
+    const plan = zipPlan(await medienAlle());
+    if (!plan.ja.length && !plan.nein.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Nein“ – die ZIP wäre leer."); return; }
+    const enc = new TextEncoder(), eintraege = [];
+    eintraege.push({ name: "Übersicht.html", blob: new Blob([uebersicht(plan)], { type: "text/html" }) });
+    for (const gruppe of ["ja", "nein"]) for (const x of plan[gruppe]) {
+      const basis = `${OBER[gruppe]}/${ordnerName(x.k)}/`;
+      eintraege.push({ name: basis + "Steckbrief.txt", blob: new Blob(["﻿" + steckbrief(x.k, x.r)], { type: "text/plain" }) });
+      const namen = dateiNamen(x.medien);
+      x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: m.blob }));
+    }
+    const zip = await zipBauen(eintraege, (n, g) => zeige(`ZIP wird erstellt … ${n} / ${g}`, 20000));
+    const d = new Date(), z = n => String(n).padStart(2, "0");
+    const name = `${sauber(info.titel || "Besichtigung")} ${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}.zip`;
+    const datei = new File([zip], name, { type: "application/zip" });
+    zeige("ZIP fertig (" + mb(zip.size) + ")");
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [datei] })) { await navigator.share({ files: [datei], title: name }); return; }
+    } catch (err) { if (err && err.name === "AbortError") return; }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(datei); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (err) {
+    alert("ZIP konnte nicht erstellt werden: " + (err && err.message || err));
+  } finally { ui.zipLaeuft = false; zeichnen(); }
+}
+
+/* ================= Ergebnisse als Datei (fuer den Mac) ================= */
 async function senden() {
-  const d = new Date(), z = n => String(n).padStart(2, "0");   // Ortszeit im Dateinamen
+  const d = new Date(), z = n => String(n).padStart(2, "0");
   const name = `besichtigung-ergebnisse-${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}.json`;
-  const inhalt = { format: "besichtigung-ergebnisse", version: 1, erstellt: jetzt(),
+  const inhalt = { format: "besichtigung-ergebnisse", version: 2, erstellt: jetzt(),
     zeitzone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     ergebnisse: kunden.map(k => ({ id: k.id, nr: k.nr, name: k.name, aut: k.aut, ...(erg[k.id] || {}) }))
       .filter(x => x.besuche || x.fertig) };
@@ -172,12 +398,13 @@ async function senden() {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-/* ---------- Ansichten ---------- */
+/* ================= Ansichten ================= */
 function zeichnen() {
   const app = document.getElementById("app");
   if (!kunden.length) return app.innerHTML = ansichtLeer();
   if (ui.ansicht === "kunde") return app.innerHTML = ansichtKunde();
   if (ui.ansicht === "mehr") return app.innerHTML = ansichtMehr();
+  if (ui.ansicht === "zip") return app.innerHTML = ansichtZip();
   app.innerHTML = ansichtListe();
   const s = document.getElementById("suche");
   if (s && ui.fokus) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
@@ -207,20 +434,20 @@ function ansichtListe() {
   const fertig = kunden.filter(k => erg[k.id] && erg[k.id].fertig).length;
   const offenIn = g => kunden.filter(k => (g === "alle" || k.gruppe === g) && !(erg[k.id] && erg[k.id].fertig)).length;
   const gchip = (g, t) => `<button class="chip ${ui.gruppe === g ? "an" : ""}" data-akt="gruppe" data-wert="${g}">${t} <span class="klein" style="color:inherit;opacity:.75">${offenIn(g)} offen</span></button>`;
-  const chip = (f, t) => `<button class="chip ${ui.nurOffen ? "an" : ""}" data-akt="nuroffen">${t}</button>`;
   return `<div class="kopf"><div class="zeile"><div style="flex:1"><h1>Besichtigung</h1>
       <div class="unter">${fertig} von ${kunden.length} erledigt</div></div>
+      <button class="chip" data-akt="zip" style="background:transparent;color:#fff;border-color:#ffffff66">ZIP</button>
       <button class="chip" data-akt="mehr" style="background:transparent;color:#fff;border-color:#ffffff66">Mehr</button></div></div>
   <main>
     <div class="suche"><input id="suche" type="search" placeholder="Name, Ort, Straße, Aut-Nr. …" value="${esc(ui.suche)}" autocomplete="off"></div>
     ${hatGruppen ? `<div class="filter">${gchip("woche", "Diese Woche")}${gchip("samstag", "Samstag")}${gchip("alle", "Alle")}</div>` : ""}
-    <div class="filter">${chip("", "Nur offene")}</div>
+    <div class="filter"><button class="chip ${ui.nurOffen ? "an" : ""}" data-akt="nuroffen">Nur offene</button></div>
     <div class="stand">${treffer.length} angezeigt · ${hatGruppen ? "W = diese Woche auf der Tour · 1, 2, 3 … = Samstagsroute" : "Nummer = Fahrreihenfolge"}</div>
     ${treffer.map(k => { const s = status(k.id); return `
       <button class="kunde" data-akt="oeffnen" data-id="${esc(k.id)}">
         <div class="nr">${esc(k.nr)}</div>
         <div class="mitte"><div class="name">${esc(k.name)}</div>
-          <div class="ort">${esc((k.strasse + " " + (k.hnr || "")).trim())} · ${esc(k.ort)}</div>
+          <div class="ort">${esc(adresse(k))} · ${esc(k.ort)}</div>
           <div style="margin-top:4px"><span class="sc ${scKlasse(k.sc)}">${esc(scText(k.sc))}</span></div></div>
         <div class="status ${s.k}">${s.t}</div></button>`; }).join("")}
   </main>`;
@@ -229,11 +456,45 @@ function ansichtListe() {
 function ansichtMehr() {
   return `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="liste">‹ Liste</button></div><h1>Mehr</h1></div>
   <main>
-    <div class="karte"><b>Ergebnisse senden</b><p class="klein">Schickt Ihre Angaben und Uhrzeiten als Datei – am besten per AirDrop an den Mac. Fotos und Videos bleiben in Ihrer Fotos-App und werden über die Uhrzeit zugeordnet.</p>
-      <button class="gross start" data-akt="senden">Ergebnisse senden</button></div>
-    <div class="karte"><b>Kundenliste</b><p class="klein">${kunden.length} Standorte${info.importiert ? ", geladen am " + uhr(info.importiert) : ""}. Ihre bisherigen Angaben bleiben beim Neuladen erhalten.</p>
+    <div class="karte"><b>ZIP für den Chef</b><p class="klein">Vorschau ansehen und als ZIP auf dem iPhone sichern („In Dateien sichern“) oder weitergeben. Abends einmal sichern – das ist zugleich Ihre Sicherung der Fotos.</p>
+      <button class="gross start" data-akt="zip">ZIP-Vorschau</button></div>
+    <div class="karte"><b>Ergebnisse an den Mac</b><p class="klein">Nur die Angaben (ohne Fotos) als kleine Datei, z. B. per AirDrop.</p>
+      <button class="knopf2" data-akt="senden">Ergebnisse senden</button></div>
+    <div class="karte"><b>Kundenliste</b><p class="klein">${kunden.length} Standorte${info.importiert ? ", geladen am " + uhr(info.importiert) : ""}. Ihre Angaben, Fotos und Videos bleiben beim Neuladen erhalten.</p>
       <button class="knopf2" data-akt="laden">Neue Kundenliste laden</button></div>
-    <div class="karte"><b>So geht’s</b><p class="klein">Kunde antippen → „Ich bin da“ → Schritte abarbeiten → „Fertig“. Fotos und Video mit der normalen Kamera (seitliche Kamerataste). Wichtig: Fotos zwischen „Ich bin da“ und „Fertig“ machen – darüber werden sie dem Kunden zugeordnet.</p></div>
+    <div class="karte"><b>So geht’s</b><p class="klein">Kunde antippen → „Ich bin da“ → Schritte abarbeiten → „Fertig“. „Foto aufnehmen“ und „Video aufnehmen“ öffnen die Kamera direkt. Das Maßband-Foto in der App „Maßband“ machen, in Fotos sichern und hier mit „Maßband-Foto hinzufügen“ auswählen.</p></div>
+  </main>`;
+}
+
+function ansichtZip() {
+  if (!ui.zipDaten) { medienAlle().then(m => { ui.zipDaten = zipPlan(m); if (ui.ansicht === "zip") zeichnen(); }); }
+  const plan = ui.zipDaten;
+  const kopf = `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="liste">‹ Liste</button></div><h1>ZIP-Vorschau</h1>
+    <div class="unter">So sieht es Ihr Chef</div></div>`;
+  if (!plan) return kopf + `<main><p>Wird geladen …</p></main>`;
+  const urls = ui.zipUrls = ui.zipUrls || {};
+  const karte = (x, gruppe) => {
+    const namen = dateiNamen(x.medien), r = x.r, k = x.k;
+    const fehlt = [];
+    if (!x.medien.some(m => m.art === "front")) fehlt.push("Foto frontal");
+    if (!x.medien.some(m => m.art === "mass")) fehlt.push("Maß-Foto");
+    if (!x.medien.some(m => m.art === "video")) fehlt.push("Video");
+    if (!r.rechtsCm) fehlt.push("cm");
+    const mini = x.medien.map(m => { if (!m.typ.startsWith("image/")) return `<span>🎥</span>`;
+      urls[m.id] = urls[m.id] || URL.createObjectURL(m.blob); return `<img src="${urls[m.id]}" alt="">`; }).join("");
+    return `<button class="karte zipkunde" data-akt="oeffnen" data-id="${esc(k.id)}" style="width:100%;text-align:left;font:inherit;color:inherit">
+      <div class="titel">📁 ${esc(ordnerName(k))}</div>
+      <div class="datei">Steckbrief.txt${namen.length ? " · " + namen.map(esc).join(" · ") : ""}</div>
+      ${mini ? `<div class="mini">${mini}</div>` : ""}
+      <div class="klein">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} · reicht: ${esc(r.rechtsFrei || "–")}${r.notiz ? " · " + esc(r.notiz.slice(0, 50)) : ""}</div>
+      ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
+  const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
+  return kopf + `<main>
+    <div class="karte"><div>📄 <b>Übersicht.html</b> – alle Standorte auf einen Blick${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}</div>
+      <div class="klein" style="margin-top:6px">${standorte(plan.ja.length + plan.nein.length)} in der ZIP · ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht in der ZIP)` : ""}</div></div>
+    <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "ZIP wird erstellt …" : "ZIP erstellen und sichern"}</button>
+    <div class="ordner">📁 ${OBER.ja} (${plan.ja.length})</div>${plan.ja.map(x => karte(x, "ja")).join("") || `<p class="klein">–</p>`}
+    <div class="ordner">📁 ${OBER.nein} (${plan.nein.length})</div>${plan.nein.map(x => karte(x, "nein")).join("") || `<p class="klein">–</p>`}
   </main>`;
 }
 
@@ -242,57 +503,66 @@ function kopfKunde(k) {
     <div style="flex:1;text-align:right" class="unter">Nr. ${esc(k.nr)} · Schritt ${ui.schritt + 1} von ${SCHRITTE.length}</div></div>
     <h1>${esc(k.name)}</h1></div>`;
 }
-
 function datenKarte(k) {
   const tel = k.tel ? `<a href="tel:${esc(k.tel.replace(/[^0-9+]/g, ""))}">${esc(k.tel)}</a>` : "–";
   return `<div class="karte"><h2>${esc(k.name)}</h2>${k.name2 ? `<div class="z2">${esc(k.name2)}</div>` : ""}
     <dl class="daten">
-      <dt>Adresse</dt><dd>${esc((k.strasse + " " + (k.hnr || "")).trim())}<br>${esc(k.plz)} ${esc(k.ort)}${k.ungefaehr ? ' <span class="klein">(Hausnr. fehlt/ungefähr)</span>' : ""}</dd>
+      <dt>Adresse</dt><dd>${esc(adresse(k))}<br>${esc(k.plz)} ${esc(k.ort)}${k.ungefaehr ? ' <span class="klein">(Hausnr. fehlt/ungefähr)</span>' : ""}</dd>
       <dt>Telefon</dt><dd>${tel}</dd>
       <dt>Aut-Nr.</dt><dd>${esc(k.aut || "–")}${k.schl ? " · Schl. " + esc(k.schl) : ""}</dd>
       <dt>Typ</dt><dd>${esc(k.typ || "–")} · <span class="sc ${scKlasse(k.sc)}">${esc(scText(k.sc))}</span> · ${esc(k.turnus || "")}</dd>
       ${k.hinweis ? `<dt>Hinweis</dt><dd>${esc(k.hinweis)}</dd>` : ""}
     </dl></div>`;
 }
-
 function fortschritt() {
   return `<div class="fortschritt">${SCHRITTE.map((_, i) => `<span class="${i < ui.schritt ? "fertig" : i === ui.schritt ? "jetzt" : ""}"></span>`).join("")}</div>`;
 }
-
 function janein(feld, wert) {
   return `<div class="janein"><button class="ja ${wert === "ja" ? "an" : ""}" data-akt="setze" data-feld="${feld}" data-wert="ja">Ja</button>
     <button class="nein ${wert === "nein" ? "an" : ""}" data-akt="setze" data-feld="${feld}" data-wert="nein">Nein</button></div>`;
 }
-
-function haken(feld, an, text) {
-  return `<button class="gross ${an ? "haken" : ""}" data-akt="haken" data-feld="${feld}">${an ? "✓ " : ""}${text}</button>`;
+function galerie(kid, art) {
+  const m = (cache[kid] || []).filter(x => x.art === art);
+  if (!m.length) return "";
+  return `<div class="bilder">${m.map(x => `<div class="bild">${x.url ? `<img src="${x.url}" alt="">`
+    : `<div class="vid">🎥<small>${mb(x.groesse)}</small></div>`}<button class="weg" data-akt="weg" data-mid="${esc(x.id)}" aria-label="Löschen">×</button></div>`).join("")}</div>`;
+}
+function knoepfe(art, haupt, zweit) {
+  return `<button class="gross start" data-akt="aufnehmen" data-art="${art}" data-quelle="${haupt.q}">${haupt.t}</button>
+    <button class="knopf2" data-akt="aufnehmen" data-art="${art}" data-quelle="${zweit.q}">${zweit.t}</button>`;
 }
 
 function ansichtKunde() {
   const k = kunden.find(x => x.id === ui.id); if (!k) { ui.ansicht = "liste"; return ansichtListe(); }
   const r = e(k.id); const s = ui.schritt; let inhalt = "";
+  const n = art => anzahl(k.id, art);
   if (s === 0) {
     const offen = r.besuche.length && !r.besuche[r.besuche.length - 1].ende;
     inhalt = datenKarte(k) + `<div class="schritt"><h3>1. Ankommen</h3>
-      <div class="hinweis">Tippen Sie auf „Ich bin da“, sobald Sie vor dem Automaten stehen. Ab jetzt gemachte Fotos und Videos gehören zu diesem Kunden.</div>
+      <div class="hinweis">Tippen Sie auf „Ich bin da“, sobald Sie vor dem Automaten stehen.</div>
       ${offen ? `<button class="gross haken" data-akt="weiter">✓ Angekommen um ${uhr(r.besuche[r.besuche.length - 1].start).slice(-5)} – weiter</button>`
-              : `<button class="gross start" data-akt="ankommen">${r.fertig ? "Noch einmal da – erneut erfassen" : "Ich bin da"}</button>`}
+              : r.fertig ? `<div class="hinweis" style="background:var(--gruen-hell)">✓ Erledigt. Mit „Weiter“ ansehen oder Fotos nachtragen – er bleibt erledigt.</div>
+                  <button class="knopf2" data-akt="ankommen">Noch einmal vor Ort – neu erfassen</button>`
+              : `<button class="gross start" data-akt="ankommen">Ich bin da</button>`}
       ${r.besuche.length ? `<div class="zeiten">Besuche: ${r.besuche.map(b => uhr(b.start) + (b.ende ? "–" + uhr(b.ende).slice(-5) : " (läuft)")).join(", ")}</div>` : ""}</div>`;
   } else if (s === 1) {
     inhalt = `<div class="schritt"><h3>2. Foto frontal</h3>
-      <div class="hinweis">Gerade von vorne fotografieren. <b>Der ganze Automat mit allen vier Ecken</b> muss im Bild sein, dazu etwas Wand rechts daneben.</div>
-      ${haken("fotoFront", r.fotoFront, "Foto gemacht")}</div>`;
+      <div class="hinweis">Gerade von vorne. <b>Der ganze Automat mit allen vier Ecken</b> im Bild, dazu etwas Wand rechts daneben.</div>
+      ${knoepfe("front", { q: "kamera", t: "📷 Foto aufnehmen" }, { q: "fotos", t: "Aus Fotos wählen" })}
+      ${galerie(k.id, "front")}</div>`;
   } else if (s === 2) {
-    inhalt = `<div class="schritt"><h3>3. Platz rechts</h3>
-      <div class="hinweis">Zollstock vom <b>rechten Rand des Automaten</b> nach rechts an die Wand halten und fotografieren. Benötigt: <b>90–100 cm</b>.</div>
-      ${haken("fotoZoll", r.fotoZoll, "Foto mit Zollstock gemacht")}
+    inhalt = `<div class="schritt"><h3>3. Maß rechts</h3>
+      <div class="hinweis">In der App <b>Maßband</b> vom <b>rechten Rand des Automaten</b> nach rechts messen, Auslöser drücken und das Bild in Fotos sichern. Benötigt: <b>90–100 cm</b>.</div>
+      ${knoepfe("mass", { q: "fotos", t: "📏 Maßband-Foto hinzufügen" }, { q: "kamera", t: "📷 Foto aufnehmen (z. B. Zollstock)" })}
+      ${galerie(k.id, "mass")}
       <label class="feld" for="cm">Rechts frei (cm)</label>
       <input class="cm" id="cm" type="number" inputmode="numeric" min="0" max="999" placeholder="z. B. 95" value="${esc(r.rechtsCm)}">
       <label class="feld">Reichen 90–100 cm?</label>${janein("rechtsFrei", r.rechtsFrei)}</div>`;
   } else if (s === 3) {
     inhalt = `<div class="schritt"><h3>4. Video</h3>
       <div class="hinweis"><b>Hochkant, 3–5 Sekunden.</b> Am Automaten beginnen und langsam nach rechts schwenken.</div>
-      ${haken("video", r.video, "Video gemacht")}</div>`;
+      ${knoepfe("video", { q: "kamera", t: "🎥 Video aufnehmen" }, { q: "fotos", t: "Aus Fotos wählen" })}
+      ${galerie(k.id, "video")}</div>`;
   } else if (s === 4) {
     inhalt = `<div class="schritt"><h3>5. Kommt der Standort in Frage?</h3>
       <div class="hinweis">Auch „Nein“ ankreuzen – dann ist klar, dass er geprüft wurde.</div>${janein("inFrage", r.inFrage)}</div>`;
@@ -302,12 +572,13 @@ function ansichtKunde() {
       <textarea id="notiz" placeholder="Notiz …">${esc(r.notiz)}</textarea></div>`;
   } else {
     const p = (ok, t) => `<li class="${ok ? "ok" : "fehlt"}">${ok ? "✓" : "○"} ${t}</li>`;
-    inhalt = `<div class="schritt"><h3>7. Abschluss</h3><div class="karte"><ul class="zusammen" style="margin:0;padding-left:0">
-      ${p(r.besuche.length > 0, "Ankunft erfasst")}${p(r.fotoFront, "Foto frontal")}${p(r.fotoZoll, "Foto mit Zollstock")}
+    inhalt = `<div class="schritt"><h3>7. Abschluss</h3><div class="karte"><ul class="zusammen">
+      ${p(r.besuche.length > 0, "Ankunft erfasst")}${p(n("front") > 0, "Foto frontal (" + n("front") + ")")}
+      ${p(n("mass") > 0, "Maß-Foto (" + n("mass") + ")")}
       ${p(r.rechtsCm !== "", "Rechts frei: " + (r.rechtsCm !== "" ? esc(r.rechtsCm) + " cm" : "keine Zahl"))}
-      ${p(r.rechtsFrei !== "", "90–100 cm reichen: " + (r.rechtsFrei || "offen"))}${p(r.video, "Video")}
+      ${p(r.rechtsFrei !== "", "90–100 cm reichen: " + (r.rechtsFrei || "offen"))}${p(n("video") > 0, "Video (" + n("video") + ")")}
       ${p(r.inFrage !== "", "Kommt in Frage: " + (r.inFrage || "offen"))}${p(true, "Notiz: " + (r.notiz ? esc(r.notiz.slice(0, 60)) + (r.notiz.length > 60 ? "…" : "") : "–"))}
-      </ul></div><div class="hinweis">Mit „Fertig“ endet die Zeit für diesen Kunden. Fehlendes können Sie jederzeit nachtragen.</div></div>`;
+      </ul></div><div class="hinweis">Mit „Fertig“ ist der Kunde erledigt. Fehlendes können Sie jederzeit nachtragen.</div></div>`;
   }
   const letzter = s === SCHRITTE.length - 1;
   return kopfKunde(k) + `<main>${fortschritt()}${inhalt}</main>
@@ -315,7 +586,7 @@ function ansichtKunde() {
       ${letzter ? `<button class="fertig" data-akt="fertig">Fertig</button>` : `<button class="weiter" data-akt="weiter">Weiter</button>`}</div>`;
 }
 
-/* ---------- Eingaben ---------- */
+/* ================= Eingaben ================= */
 function eingabenUebernehmen() {
   if (ui.ansicht !== "kunde") return;
   const r = e(ui.id);
@@ -323,36 +594,50 @@ function eingabenUebernehmen() {
   const no = document.getElementById("notiz"); if (no) r.notiz = no.value;
   sichern(ui.id);
 }
-
 document.addEventListener("input", ev => {
   if (ev.target.id === "suche") { ui.suche = ev.target.value; ui.fokus = true; zeichnen(); ui.fokus = false; return; }
   if (ev.target.id === "cm" || ev.target.id === "notiz") eingabenUebernehmen();
 });
+function zipFreigeben() { Object.values(ui.zipUrls || {}).forEach(u => URL.revokeObjectURL(u)); ui.zipUrls = null; ui.zipDaten = null; }
 
-document.addEventListener("click", ev => {
-  const b = ev.target.closest("[data-akt]"); if (!b) return;
+document.addEventListener("click", async ev => {
+  const b = ev.target.closest("[data-akt]"); if (!b || b.disabled) return;
   const akt = b.dataset.akt;
   if (akt !== "liste" && akt !== "oeffnen") eingabenUebernehmen();
   if (akt === "laden") return document.getElementById("datei").click();
   if (akt === "senden") return senden();
+  if (akt === "zipbauen") return zipErstellen();
+  if (akt === "aufnehmen") {   // muss direkt im Klick passieren, sonst blockiert iOS die Kamera
+    ui.ziel = b.dataset.art;
+    const id = b.dataset.quelle === "kamera" ? (ui.ziel === "video" ? "kamVideo" : "kamFoto") : (ui.ziel === "video" ? "wahlVideo" : "wahlFoto");
+    return document.getElementById(id).click();
+  }
+  if (akt === "weg") {
+    if (!confirm("Diese Aufnahme löschen?")) return;
+    await medienLoeschen(b.dataset.mid); await ladeMedien(ui.id); return zeichnen();
+  }
   if (akt === "mehr") { ui.ansicht = "mehr"; }
+  else if (akt === "zip") { zipFreigeben(); ui.ansicht = "zip"; }
   else if (akt === "gruppe") { ui.gruppe = b.dataset.wert; schreiben("bes.gruppe", ui.gruppe); }
   else if (akt === "nuroffen") { ui.nurOffen = !ui.nurOffen; }
-  else if (akt === "liste") { eingabenUebernehmen(); ui.ansicht = "liste"; }
-  else if (akt === "oeffnen") { ui.id = b.dataset.id; ui.ansicht = "kunde"; const r = erg[ui.id];
-    ui.schritt = r && r.besuche.length && !r.besuche[r.besuche.length - 1].ende ? 1 : 0; }
+  else if (akt === "liste") { eingabenUebernehmen(); if (ui.ansicht === "zip") zipFreigeben(); ui.ansicht = "liste"; }
+  else if (akt === "oeffnen") {
+    if (ui.ansicht === "zip") zipFreigeben();
+    ui.id = b.dataset.id; ui.ansicht = "kunde"; const r = erg[ui.id];
+    ui.schritt = r && r.besuche.length && !r.besuche[r.besuche.length - 1].ende ? 1 : 0;
+    ladeMedien(ui.id).then(() => { if (ui.ansicht === "kunde") zeichnen(); });
+  }
   else if (akt === "ankommen") { const r = e(ui.id); r.besuche.push({ start: jetzt() }); r.fertig = false; sichern(ui.id);
     ui.schritt = 1; zeige("Ankunft erfasst – jetzt fotografieren."); }
   else if (akt === "weiter") {
-    // Ohne "Ich bin da" fehlt die Uhrzeit fuer die Foto-Zuordnung -> nachfragen
+    // Erledigte Kunden: nur blaettern (zum Ansehen/Nachtragen) - bleiben erledigt (Test 03.11.)
     const r = e(ui.id), offen = r.besuche.length && !r.besuche[r.besuche.length - 1].ende;
-    if (ui.schritt === 0 && !offen) {
+    if (ui.schritt === 0 && !offen && !r.fertig) {
       if (!confirm("Sind Sie jetzt vor Ort? Dann wird die Ankunft erfasst.")) return;
       r.besuche.push({ start: jetzt() }); r.fertig = false; sichern(ui.id);
     }
     ui.schritt = Math.min(ui.schritt + 1, SCHRITTE.length - 1); }
   else if (akt === "zurueck") { ui.schritt = Math.max(ui.schritt - 1, 0); }
-  else if (akt === "haken") { const r = e(ui.id); r[b.dataset.feld] = !r[b.dataset.feld]; sichern(ui.id); }
   else if (akt === "setze") { const r = e(ui.id); const f = b.dataset.feld;
     r[f] = r[f] === b.dataset.wert ? "" : b.dataset.wert; sichern(ui.id); }
   else if (akt === "fertig") { const r = e(ui.id);
