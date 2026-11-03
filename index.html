@@ -250,6 +250,7 @@ document.getElementById("datei").addEventListener("change", ev => {
       info.importiert = jetzt(); info.quelle = f.name;
       info.titel = d.titel || "Standort-Besichtigung"; info.auswahl = d.auswahl || "";
       info.vermerk = d.vermerk || "";   // z. B. wer es ausgearbeitet hat - steht in der Datei, nicht im Programm
+      info.autor = d.autor || "";       // Name fuer Druck-Wasserzeichen und Foto-Daten
       schreiben(K_INFO, info);
       zeige(liste.length + " Standorte geladen.");
       ui.ansicht = "liste"; zeichnen();
@@ -356,19 +357,50 @@ function dateiNamen(medien) {
     const end = m.typ.startsWith("image/") ? (m.typ.includes("png") ? "png" : "jpg") : (m.typ.includes("mp4") ? "mp4" : "mov");
     return `${ART_NAME[m.art] || m.art} ${zaehl[m.art]}.${end}`; });
 }
-function steckbrief(k, r) {
-  const kopf = info.vermerk ? [info.vermerk, "=".repeat(info.vermerk.length), ""] : [];   // Kopfzeile mit dem Namen
-  const z = [...kopf, `${k.name}${k.name2 ? " (" + k.name2 + ")" : ""}`, "",
-    `Adresse:        ${adresse(k)}, ${k.plz} ${k.ort}`, `Telefon:        ${k.tel || "-"}`,
-    `Automat:        ${k.aut || "-"}${k.schl ? "  (Schlüssel " + k.schl + ")" : ""}`,
-    `Typ:            ${k.typ || "-"}   Anbau: ${scText(k.sc)}   Turnus: ${k.turnus || "-"}`, "",
-    `Rechts frei:    ${r.rechtsCm ? r.rechtsCm + " cm" : "-"}`,
-    `90-100 cm reichen: ${r.rechtsFrei || "-"}`, `Lage:           ${LAGE[r.lage] || "-"}`,
-    `Umfeld:         ${umfeldText(r) || "-"}`, `Kommt in Frage: ${r.inFrage || "-"}`,
-    `Notiz:          ${r.notiz || "-"}`, "",
-    `Besichtigt:     ${(r.besuche || []).map(b => tag(b.start, true) + " " + uhr(b.start).slice(-5)).join(", ") || "-"}`,
-    ...(info.vermerk ? ["", info.vermerk] : [])];
-  return z.join("\r\n") + "\r\n";
+/* Mirko 03.11.2026: "wenn eins der Dokumente gedruckt wird, ein Wasserzeichen mit meinem Namen ganz oft" -
+   am Bildschirm unsichtbar, beim Drucken schraeg ueber jede Seite (fest positioniert = jede Seite). */
+function wasserzeichen() {
+  if (!info.autor) return "";
+  return `<div class="wz" aria-hidden="true"><div>${Array.from({ length: 160 }, () => `<span>${esc(info.autor)}</span>`).join("")}</div></div>`;
+}
+const DRUCK_CSS = `.wz{display:none}
+@media print{.wz{display:block;position:fixed;top:0;left:0;width:100%;height:100%;overflow:hidden;z-index:9999;pointer-events:none}
+.wz>div{position:absolute;top:-50%;left:-50%;width:200%;height:200%;transform:rotate(-30deg);display:flex;flex-wrap:wrap;
+align-content:space-around;justify-content:space-around;gap:60px 80px;color:rgba(15,42,74,.10);font:700 24px Arial,Helvetica,sans-serif;white-space:nowrap}}`;
+const kopfMeta = () => info.autor ? `<meta name="author" content="${esc(info.autor)}">` : "";
+const kopfZeile = () => info.vermerk ? `<thead><tr><td><div class="autor">${esc(info.vermerk)} · ${esc(info.titel || "")}</div></td></tr></thead>` : "";
+
+// Steckbrief je Standort als eigenes Dokument (statt Text): Kopfzeile, Daten, Mass-Fotos, Druck-Wasserzeichen
+function steckbriefHtml(k, r, urls) {
+  const z = (t, w) => `<tr><th>${t}</th><td>${w}</td></tr>`;
+  const umfeld = (r.merkmale || []).map(m => `<span class="tag">${esc(m)}</span>`).join("") + (r.umfeld ? " " + esc(r.umfeld) : "");
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${kopfMeta()}
+<title>${esc(k.nr + " " + k.name)} – Steckbrief</title>
+<style>
+body{font:15px/1.45 -apple-system,"Segoe UI",Arial,sans-serif;margin:0;color:#111827;background:#fff}
+table.blatt{width:100%;border-collapse:collapse}table.blatt>thead>tr>td,table.blatt>tbody>tr>td{padding:0}
+.autor{background:#0b2038;color:#fff;font-size:13px;font-weight:600;padding:7px 20px}
+.inhalt{max-width:900px;margin:0 auto;padding:16px 20px}h1{font-size:22px;margin:4px 0}h1 small{font-weight:400;color:#6b7280;font-size:15px}
+table.daten{border-collapse:collapse;margin:10px 0 14px}table.daten th{text-align:left;color:#6b7280;font-weight:500;padding:3px 16px 3px 0;vertical-align:top;white-space:nowrap}table.daten td{padding:3px 0}
+.tag{display:inline-block;background:#eef2ff;color:#1e3a8a;border-radius:999px;padding:1px 8px;font-size:13px;margin:1px 4px 1px 0}
+.fotos img{max-width:100%;max-height:85vh;display:block;margin:10px 0;border:1px solid #d1d5db;border-radius:8px}
+footer{color:#6b7280;font-size:13px;margin-top:16px}
+@media print{.autor{background:#fff;color:#111;border-bottom:1px solid #9ca3af}.fotos img{max-height:230mm;break-inside:avoid}}
+${DRUCK_CSS}
+</style></head><body>${wasserzeichen()}
+<table class="blatt">${kopfZeile()}<tbody><tr><td><div class="inhalt">
+<h1>${esc(k.nr)} ${esc(k.name)}${k.name2 ? ` <small>${esc(k.name2)}</small>` : ""}</h1>
+<table class="daten">
+${z("Adresse", `${esc(adresse(k))}, ${esc(k.plz)} ${esc(k.ort)}`)}${z("Telefon", esc(k.tel || "–"))}
+${z("Automat", esc(k.aut || "–") + (k.schl ? " · Schlüssel " + esc(k.schl) : ""))}
+${z("Typ / Anbau", `${esc(k.typ || "–")} · ${esc(scText(k.sc))} · Turnus ${esc(k.turnus || "–")}`)}
+${z("Rechts frei", (r.rechtsCm ? `<b>${esc(r.rechtsCm)} cm</b>` : "–") + (r.rechtsFrei ? " · 90–100 cm reichen: " + esc(r.rechtsFrei) : ""))}
+${z("Lage", esc(LAGE[r.lage] || "–"))}${z("Umfeld", umfeld || "–")}${z("Kommt in Frage", esc(r.inFrage || "–"))}
+${z("Notiz", esc(r.notiz || "–"))}${z("Besichtigt", esc(besuchsTage(r).join(", ") || "–"))}
+</table>
+<div class="fotos">${urls.map((u, i) => `<img src="${u}" alt="Maß-Foto ${i + 1}">`).join("")}</div>
+${info.vermerk ? `<footer>${esc(info.vermerk)}</footer>` : ""}
+</div></td></tr></tbody></table></body></html>`;
 }
 /* Uebersicht = das End-Dokument. Mirko 03.11.2026: Mass-Fotos "klein drin, beim Andruecken groesser".
    Die Fotos stecken als Daten direkt in der Datei (kein Link, kein Server): eine Datei, die
@@ -407,13 +439,40 @@ async function stempeln(blob, zeilen) {
     return await new Promise(res => c.toBlob(r => res(r || blob), "image/jpeg", 0.88));
   } catch (err) { return blob; }
 }
+/* Unsichtbarer Urheber-Vermerk in den Foto-Daten (EXIF: Bildbeschreibung, Fotograf, Copyright).
+   Mirko 03.11.2026: "verborgen ... mit meinem Namen". Nur ASCII, wie EXIF es vorsieht. */
+async function mitExif(blob, felder) {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  if (buf[0] !== 0xFF || buf[1] !== 0xD8) return blob;   // kein JPEG
+  const ersatz = { "ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss", "–": "-", "—": "-", "·": "-" };
+  const enc = s => new TextEncoder().encode(String(s).replace(/[äöüÄÖÜß–—·]/g, c => ersatz[c]).replace(/[^\x20-\x7E]/g, "") + "\0");
+  const ein = felder.filter(f => f[1]).map(([tag, text]) => ({ tag, d: enc(text) })).sort((a, b) => a.tag - b.tag);
+  if (!ein.length) return blob;
+  let off = 8 + 2 + ein.length * 12 + 4;
+  const tiff = new Uint8Array(off + ein.reduce((s, e) => s + (e.d.length > 4 ? e.d.length : 0), 0));
+  const dv = new DataView(tiff.buffer);
+  tiff.set([0x4D, 0x4D, 0x00, 0x2A, 0, 0, 0, 8]); dv.setUint16(8, ein.length);
+  let p = 10;
+  for (const e of ein) {
+    dv.setUint16(p, e.tag); dv.setUint16(p + 2, 2); dv.setUint32(p + 4, e.d.length);
+    if (e.d.length <= 4) tiff.set(e.d, p + 8); else { dv.setUint32(p + 8, off); tiff.set(e.d, off); off += e.d.length; }
+    p += 12;
+  }
+  dv.setUint32(p, 0);
+  const lang = 2 + 6 + tiff.length, app1 = new Uint8Array(2 + lang);
+  app1.set([0xFF, 0xE1, lang >> 8, lang & 0xFF, 0x45, 0x78, 0x69, 0x66, 0, 0]); app1.set(tiff, 10);
+  const pos = buf[2] === 0xFF && buf[3] === 0xE0 ? 4 + ((buf[4] << 8) | buf[5]) : 2;   // hinter JFIF-Kopf
+  return new Blob([buf.slice(0, pos), app1, buf.slice(pos)], { type: "image/jpeg" });
+}
 async function stempelAlle(plan, fortschritt) {
   const fertig = new Map(), alle = [...plan.ja, ...plan.nein]; let n = 0;
   const gesamt = alle.reduce((s, x) => s + x.medien.length, 0);
   for (const x of alle) {
     const k = x.k, tage = besuchsTage(x.r).join(", ");
     for (const m of x.medien) {
-      fertig.set(m.id, await stempeln(m.blob, [info.vermerk || "", `${k.nr} · ${k.name} · ${k.ort}${tage ? " · " + tage : ""}`]));
+      const bild = await stempeln(m.blob, [info.vermerk || "", `${k.nr} · ${k.name} · ${k.ort}${tage ? " · " + tage : ""}`]);
+      fertig.set(m.id, await mitExif(bild, [[0x010E, info.vermerk], [0x013B, info.autor],
+        [0x8298, info.autor ? `(c) ${info.autor} - ${info.titel || ""}` : ""]]));
       if (fortschritt) fortschritt(++n, gesamt);
     }
   }
@@ -444,7 +503,7 @@ function uebersicht(plan, bilder) {
     </div>`; };
   const abschnitt = (liste, gruppe) => liste.length ? `<div class="raster">${liste.map(x => karte(x, gruppe)).join("")}</div>` : `<p class="grau">–</p>`;
   const d = new Date();
-  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${kopfMeta()}
 <title>${esc(info.titel || "Übersicht")}</title>
 <style>
 body{font:15px/1.45 -apple-system,"Segoe UI",Arial,sans-serif;margin:0;background:#f3f4f6;color:#111827}
@@ -474,8 +533,9 @@ table.blatt{width:100%;border-collapse:collapse}table.blatt>thead>tr>td,table.bl
 .autor{background:#0b2038;color:#fff;font-size:13px;font-weight:600;padding:7px 20px;letter-spacing:.2px}
 @media print{.autor{background:#fff;color:#111;border-bottom:1px solid #9ca3af}header{background:#fff;color:#111;border-bottom:2px solid #0f2a4a}
  body{background:#fff}.karte{break-inside:avoid}details img{width:80px;height:106px}}
-</style></head><body>
-<table class="blatt">${info.vermerk ? `<thead><tr><td><div class="autor">${esc(info.vermerk)} · ${esc(info.titel || "")}</div></td></tr></thead>` : ""}<tbody><tr><td>
+${DRUCK_CSS}
+</style></head><body>${wasserzeichen()}
+<table class="blatt">${kopfZeile()}<tbody><tr><td>
 <header><h1>${esc(info.titel || "Standort-Besichtigung")}</h1>
 <div>Stand ${d.toLocaleDateString("de-DE")} · ${standorte(plan.ja.length + plan.nein.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage</div>
 ${info.vermerk || zeitraum(plan) ? `<div class="vermerk">${esc([info.vermerk, zeitraum(plan)].filter(Boolean).join(" · "))}</div>` : ""}</header>
@@ -522,7 +582,7 @@ async function zipErstellen() {
     eintraege.push({ name: "Übersicht.html", blob: new Blob([uebersicht(plan, bilder)], { type: "text/html" }) });
     for (const gruppe of ["ja", "nein"]) for (const x of plan[gruppe]) {
       const basis = `${OBER[gruppe]}/${ordnerName(x.k)}/`;
-      eintraege.push({ name: basis + "Steckbrief.txt", blob: new Blob(["﻿" + steckbrief(x.k, x.r)], { type: "text/plain" }) });
+      eintraege.push({ name: basis + "Steckbrief.html", blob: new Blob([steckbriefHtml(x.k, x.r, bilder[x.k.id] || [])], { type: "text/html" }) });
       const namen = dateiNamen(x.medien);
       x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: stempel.get(m.id) || m.blob }));   // beschriftete Fassung
     }
@@ -669,7 +729,7 @@ function ansichtZip() {
       urls[m.id] = urls[m.id] || URL.createObjectURL(m.blob); return `<img src="${urls[m.id]}" alt="">`; }).join("");
     return `<button class="karte zipkunde" data-akt="oeffnen" data-id="${esc(k.id)}" style="width:100%;text-align:left;font:inherit;color:inherit">
       <div class="titel">📁 ${esc(ordnerName(k))}</div>
-      <div class="datei">Steckbrief.txt${namen.length ? " · " + namen.map(esc).join(" · ") : ""}</div>
+      <div class="datei">Steckbrief.html${namen.length ? " · " + namen.map(esc).join(" · ") : ""}</div>
       ${mini ? `<div class="mini">${mini}</div>` : ""}
       <div class="klein">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} · reicht: ${esc(r.rechtsFrei || "–")} · Lage: ${esc(LAGE[r.lage] || "–")}${umfeldText(r) ? " (" + esc(umfeldText(r).slice(0, 60)) + ")" : ""}${r.notiz ? " · " + esc(r.notiz.slice(0, 50)) : ""}</div>
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
