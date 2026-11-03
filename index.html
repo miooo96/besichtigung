@@ -43,7 +43,7 @@
   .stand { font-size: 14px; color: var(--grau); margin: 0 2px 8px; }
   .kunde { display: flex; gap: 12px; align-items: center; background: #fff; border-radius: 12px;
     padding: 12px; margin-bottom: 8px; border: 1px solid var(--linie); width: 100%; text-align: left; font: inherit; color: inherit; }
-  .kunde .nr { font-size: 22px; font-weight: 700; min-width: 34px; text-align: center; }
+  .kunde .nr { font-size: 21px; font-weight: 700; min-width: 46px; text-align: center; }
   .kunde .mitte { flex: 1; min-width: 0; }
   .kunde .name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .kunde .ort { font-size: 14px; color: var(--grau); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -108,7 +108,10 @@ const schreiben = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 let kunden = lesen(K_KUNDEN, []);
 let erg = lesen(K_ERG, {});
 let info = lesen(K_INFO, {});
-const ui = { ansicht: "liste", id: null, schritt: 0, suche: "", filter: "alle" };
+// Gruppen (Mirko 03.11.2026): "woche" = diese Woche auf der normalen Tour (Nr. W1 ...),
+// "samstag" = Rest am Samstag (Nr. 1 ... = Samstagsroute). Auswahl wird gemerkt.
+const ui = { ansicht: "liste", id: null, schritt: 0, suche: "", nurOffen: false,
+  gruppe: lesen("bes.gruppe", "woche") };
 
 const SCHRITTE = ["Ankommen", "Foto frontal", "Zollstock rechts", "Video", "Kommt in Frage?", "Notiz", "Abschluss"];
 
@@ -192,21 +195,27 @@ function ansichtLeer() {
 
 function ansichtListe() {
   const q = norm(ui.suche);
+  const hatGruppen = kunden.some(k => k.gruppe);
+  if (!hatGruppen) ui.gruppe = "alle";
+  const inGruppe = k => ui.gruppe === "alle" || k.gruppe === ui.gruppe;
   const treffer = kunden.filter(k => {
-    if (ui.filter === "offen" && erg[k.id] && erg[k.id].fertig) return false;
-    if (ui.filter === "fertig" && !(erg[k.id] && erg[k.id].fertig)) return false;
+    if (!inGruppe(k)) return false;
+    if (ui.nurOffen && erg[k.id] && erg[k.id].fertig) return false;
     if (!q) return true;
     return norm([k.nr, k.name, k.name2, k.ort, k.strasse, k.aut, k.plz].join(" ")).includes(q);
   });
   const fertig = kunden.filter(k => erg[k.id] && erg[k.id].fertig).length;
-  const chip = (f, t) => `<button class="chip ${ui.filter === f ? "an" : ""}" data-akt="filter" data-wert="${f}">${t}</button>`;
+  const offenIn = g => kunden.filter(k => (g === "alle" || k.gruppe === g) && !(erg[k.id] && erg[k.id].fertig)).length;
+  const gchip = (g, t) => `<button class="chip ${ui.gruppe === g ? "an" : ""}" data-akt="gruppe" data-wert="${g}">${t} <span class="klein" style="color:inherit;opacity:.75">${offenIn(g)} offen</span></button>`;
+  const chip = (f, t) => `<button class="chip ${ui.nurOffen ? "an" : ""}" data-akt="nuroffen">${t}</button>`;
   return `<div class="kopf"><div class="zeile"><div style="flex:1"><h1>Besichtigung</h1>
       <div class="unter">${fertig} von ${kunden.length} erledigt</div></div>
       <button class="chip" data-akt="mehr" style="background:transparent;color:#fff;border-color:#ffffff66">Mehr</button></div></div>
   <main>
     <div class="suche"><input id="suche" type="search" placeholder="Name, Ort, Straße, Aut-Nr. …" value="${esc(ui.suche)}" autocomplete="off"></div>
-    <div class="filter">${chip("alle", "Alle")}${chip("offen", "Nur offene")}${chip("fertig", "Erledigt")}</div>
-    <div class="stand">${treffer.length} angezeigt · Nummer = Fahrreihenfolge</div>
+    ${hatGruppen ? `<div class="filter">${gchip("woche", "Diese Woche")}${gchip("samstag", "Samstag")}${gchip("alle", "Alle")}</div>` : ""}
+    <div class="filter">${chip("", "Nur offene")}</div>
+    <div class="stand">${treffer.length} angezeigt · ${hatGruppen ? "W = diese Woche auf der Tour · 1, 2, 3 … = Samstagsroute" : "Nummer = Fahrreihenfolge"}</div>
     ${treffer.map(k => { const s = status(k.id); return `
       <button class="kunde" data-akt="oeffnen" data-id="${esc(k.id)}">
         <div class="nr">${esc(k.nr)}</div>
@@ -327,7 +336,8 @@ document.addEventListener("click", ev => {
   if (akt === "laden") return document.getElementById("datei").click();
   if (akt === "senden") return senden();
   if (akt === "mehr") { ui.ansicht = "mehr"; }
-  else if (akt === "filter") { ui.filter = b.dataset.wert; }
+  else if (akt === "gruppe") { ui.gruppe = b.dataset.wert; schreiben("bes.gruppe", ui.gruppe); }
+  else if (akt === "nuroffen") { ui.nurOffen = !ui.nurOffen; }
   else if (akt === "liste") { eingabenUebernehmen(); ui.ansicht = "liste"; }
   else if (akt === "oeffnen") { ui.id = b.dataset.id; ui.ansicht = "kunde"; const r = erg[ui.id];
     ui.schritt = r && r.besuche.length && !r.besuche[r.besuche.length - 1].ende ? 1 : 0; }
