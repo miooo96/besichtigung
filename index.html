@@ -76,6 +76,10 @@
   .wahl { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
   .wahl button { font-size: 20px; font-weight: 700; padding: 18px 0; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; color: var(--text); }
   .wahl button.an { background: var(--blau2); border-color: var(--blau2); color: #fff; }
+  .merkmale { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .merkmale button { font-size: 16px; padding: 10px 13px; border-radius: 999px; border: 2px solid #d1d5db; background: #fff; color: var(--text); }
+  .merkmale button.an { background: var(--blau2); border-color: var(--blau2); color: #fff; }
+  input.text { width: 100%; font-size: 17px; padding: 12px; border-radius: 12px; border: 2px solid #d1d5db; margin-bottom: 12px; }
   label.feld { display: block; font-size: 15px; color: #374151; margin: 4px 0 6px; }
   input.cm { width: 100%; font-size: 24px; padding: 12px; border-radius: 12px; border: 2px solid #d1d5db; text-align: center; margin-bottom: 12px; }
   textarea { width: 100%; min-height: 150px; font: inherit; padding: 12px; border-radius: 12px; border: 2px solid #d1d5db; }
@@ -185,6 +189,11 @@ async function ladeMedien(kid) {
 // Mirko 03.11.2026: "Standortangaben ... ob es stark belebt ist, oder eher ruhiger abgelegen" -> Schritt "Lage"
 const SCHRITTE = ["Ankommen", "Maß rechts", "Lage", "Kommt in Frage?", "Notiz", "Abschluss"];
 const LAGE = { belebt: "stark belebt", mittel: "mittel", ruhig: "ruhig / abgelegen" };
+// Mirko 03.11.2026: "eintragbar wie Hauptstrasse oder besonderer Laden in der Naehe, z. B. Eisdiele,
+// Geschaeft" - damit man aus der Ortsbeschreibung erkennt, ob viel Betrieb ist. Mehrfachauswahl + Freitext.
+const MERKMALE = ["Hauptstraße", "Wohngebiet / Nebenstraße", "Ortsmitte", "Bushaltestelle", "Parkplatz",
+  "Supermarkt / Geschäft", "Bäckerei", "Eisdiele", "Gaststätte / Kneipe", "Tankstelle", "Schule", "Gewerbegebiet"];
+function umfeldText(r) { return [...(r.merkmale || []), ...(r.umfeld ? [r.umfeld] : [])].join(", "); }
 const ZIP_ARTEN = ["mass"];   // nur diese Aufnahmen kommen in die ZIP
 // Mirko 03.11.2026: statt Kamera direkt die Maßband-App. Apple bietet dafuer keinen
 // direkten Link (Entwicklerforum 112820) - der offizielle Weg ist ein Kurzbefehl,
@@ -193,7 +202,8 @@ const KURZBEFEHL = "Maßband öffnen";
 const MASSBAND_LINK = "shortcuts://run-shortcut?name=" + encodeURIComponent(KURZBEFEHL);
 
 function jetzt() { return new Date().toISOString(); }
-function e(id) { if (!erg[id]) erg[id] = { besuche: [], rechtsCm: "", rechtsFrei: "", lage: "", inFrage: "", notiz: "", fertig: false }; return erg[id]; }
+function e(id) { if (!erg[id]) erg[id] = { besuche: [], rechtsCm: "", rechtsFrei: "", lage: "", merkmale: [], umfeld: "", inFrage: "", notiz: "", fertig: false };
+  if (!erg[id].merkmale) erg[id].merkmale = []; return erg[id]; }
 function sichern(id) { if (id) erg[id].geaendert = jetzt(); schreiben(K_ERG, erg); }
 function uhr(iso) { const d = new Date(iso); return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) + " " +
   d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }); }
@@ -341,7 +351,8 @@ function steckbrief(k, r) {
     `Automat:        ${k.aut || "-"}${k.schl ? "  (Schlüssel " + k.schl + ")" : ""}`,
     `Typ:            ${k.typ || "-"}   Anbau: ${scText(k.sc)}   Turnus: ${k.turnus || "-"}`, "",
     `Rechts frei:    ${r.rechtsCm ? r.rechtsCm + " cm" : "-"}`,
-    `90-100 cm reichen: ${r.rechtsFrei || "-"}`, `Lage:           ${LAGE[r.lage] || "-"}`, `Kommt in Frage: ${r.inFrage || "-"}`,
+    `90-100 cm reichen: ${r.rechtsFrei || "-"}`, `Lage:           ${LAGE[r.lage] || "-"}`,
+    `Umfeld:         ${umfeldText(r) || "-"}`, `Kommt in Frage: ${r.inFrage || "-"}`,
     `Notiz:          ${r.notiz || "-"}`, "",
     `Besichtigt:     ${(r.besuche || []).map(b => uhr(b.start)).join(", ") || "-"}`];
   return z.join("\r\n") + "\r\n";
@@ -380,6 +391,7 @@ function uebersicht(plan, bilder) {
       <div class="grau">${esc(k.typ || "–")} · ${esc(scText(k.sc))} · Turnus ${esc(k.turnus || "–")}${k.aut ? " · " + esc(k.aut) : ""}</div>
       <div class="mass">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} <span class="reicht ${r.rechtsFrei === "ja" ? "ja" : r.rechtsFrei === "nein" ? "nein" : ""}">${r.rechtsFrei ? "90–100 cm reichen: " + esc(r.rechtsFrei) : ""}</span></div>
       <div class="lage">Lage: <b>${esc(LAGE[r.lage] || "–")}</b></div>
+      ${(r.merkmale || []).length || r.umfeld ? `<div class="umfeld">${(r.merkmale || []).map(m => `<span class="tag">${esc(m)}</span>`).join("")}${r.umfeld ? `<span class="frei">${esc(r.umfeld)}</span>` : ""}</div>` : ""}
       ${r.notiz ? `<div class="notiz">${esc(r.notiz)}</div>` : ""}
       ${fotos ? `<div class="fotos">${fotos}</div>` : `<div class="grau">kein Maß-Foto</div>`}
     </div>`; };
@@ -401,6 +413,8 @@ h2{font-size:19px;margin:22px 0 10px}h2.ja{color:#047857}h2.nein{color:#b91c1c}
 .grau{color:#6b7280;font-size:14px}.mass{font-size:18px;font-weight:700;margin:8px 0 2px}
 .reicht{font-size:14px;font-weight:600;margin-left:6px}.reicht.ja{color:#047857}.reicht.nein{color:#b91c1c}
 .notiz{background:#f9fafb;border-radius:8px;padding:6px 9px;margin-top:6px;font-size:14px}.lage{font-size:15px;margin-top:2px}
+.umfeld{margin-top:4px}.tag{display:inline-block;background:#eef2ff;color:#1e3a8a;border-radius:999px;padding:2px 9px;font-size:13px;margin:2px 4px 0 0}
+.frei{display:inline-block;font-size:13px;color:#374151;margin:2px 4px 0 0;font-style:italic}
 .fotos{margin-top:8px}details{display:inline-block;vertical-align:top;margin:0 6px 6px 0}
 summary{list-style:none;cursor:zoom-in}summary::-webkit-details-marker{display:none}
 details img{display:block;width:104px;height:138px;object-fit:cover;border-radius:8px;border:1px solid #d1d5db}
@@ -464,7 +478,8 @@ async function zipErstellen() {
 }
 
 /* ================= Zuruecksetzen (Mirko 03.11.2026: "nach dem Testen bei null anfangen") ================= */
-const hatDaten = r => r && (r.besuche && r.besuche.length || r.fertig || r.rechtsCm || r.inFrage || r.notiz || r.lage);
+const hatDaten = r => r && (r.besuche && r.besuche.length || r.fertig || r.rechtsCm || r.inFrage || r.notiz || r.lage
+  || (r.merkmale && r.merkmale.length) || r.umfeld);
 async function allesZuruecksetzen() {
   const nKunden = Object.values(erg).filter(hatDaten).length;
   const nFotos = await tx("readonly", s => req(s.count()));
@@ -598,7 +613,7 @@ function ansichtZip() {
       <div class="titel">📁 ${esc(ordnerName(k))}</div>
       <div class="datei">Steckbrief.txt${namen.length ? " · " + namen.map(esc).join(" · ") : ""}</div>
       ${mini ? `<div class="mini">${mini}</div>` : ""}
-      <div class="klein">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} · reicht: ${esc(r.rechtsFrei || "–")} · Lage: ${esc(LAGE[r.lage] || "–")}${r.notiz ? " · " + esc(r.notiz.slice(0, 50)) : ""}</div>
+      <div class="klein">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} · reicht: ${esc(r.rechtsFrei || "–")} · Lage: ${esc(LAGE[r.lage] || "–")}${umfeldText(r) ? " (" + esc(umfeldText(r).slice(0, 60)) + ")" : ""}${r.notiz ? " · " + esc(r.notiz.slice(0, 50)) : ""}</div>
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
   const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
@@ -676,7 +691,11 @@ function ansichtKunde() {
   } else if (s === 2) {
     inhalt = `<div class="schritt"><h3>3. Lage</h3>
       <div class="hinweis">Wie belebt ist es am Standort – viel Laufkundschaft und Verkehr, oder eher ruhig und abgelegen?</div>
-      ${wahl("lage", r.lage, LAGE)}</div>`;
+      ${wahl("lage", r.lage, LAGE)}
+      <label class="feld">Was ist dort? (mehrere möglich)</label>
+      <div class="merkmale">${MERKMALE.map(m => `<button class="${(r.merkmale || []).includes(m) ? "an" : ""}" data-akt="merkmal" data-wert="${esc(m)}">${esc(m)}</button>`).join("")}</div>
+      <label class="feld" for="umfeld">Sonst in der Nähe</label>
+      <input class="text" id="umfeld" type="text" placeholder="z. B. Grundschule gegenüber, Friseur nebenan" value="${esc(r.umfeld || "")}"></div>`;
   } else if (s === 3) {
     inhalt = `<div class="schritt"><h3>4. Kommt der Standort in Frage?</h3>
       <div class="hinweis">Auch „Nein“ ankreuzen – dann ist klar, dass er geprüft wurde.</div>${janein("inFrage", r.inFrage)}</div>`;
@@ -690,7 +709,7 @@ function ansichtKunde() {
       ${p(r.besuche.length > 0, "Ankunft erfasst")}${p(n("mass") > 0, "Maß-Foto (" + n("mass") + ")")}
       ${p(r.rechtsCm !== "", "Rechts frei: " + (r.rechtsCm !== "" ? esc(r.rechtsCm) + " cm" : "keine Zahl"))}
       ${p(r.rechtsFrei !== "", "90–100 cm reichen: " + (r.rechtsFrei || "offen"))}
-      ${p(!!r.lage, "Lage: " + (LAGE[r.lage] || "offen"))}
+      ${p(!!r.lage, "Lage: " + (LAGE[r.lage] || "offen"))}${p(true, "Umfeld: " + (esc(umfeldText(r)) || "–"))}
       ${p(r.inFrage !== "", "Kommt in Frage: " + (r.inFrage || "offen"))}${p(true, "Notiz: " + (r.notiz ? esc(r.notiz.slice(0, 60)) + (r.notiz.length > 60 ? "…" : "") : "–"))}
       </ul></div><div class="hinweis">Mit „Fertig“ ist der Kunde erledigt. Fehlendes können Sie jederzeit nachtragen.</div></div>`;
   }
@@ -706,11 +725,12 @@ function eingabenUebernehmen() {
   const r = e(ui.id);
   const cm = document.getElementById("cm"); if (cm) r.rechtsCm = cm.value.trim();
   const no = document.getElementById("notiz"); if (no) r.notiz = no.value;
+  const um = document.getElementById("umfeld"); if (um) r.umfeld = um.value.trim();
   sichern(ui.id);
 }
 document.addEventListener("input", ev => {
   if (ev.target.id === "suche") { ui.suche = ev.target.value; ui.fokus = true; zeichnen(); ui.fokus = false; return; }
-  if (ev.target.id === "cm" || ev.target.id === "notiz") eingabenUebernehmen();
+  if (ev.target.id === "cm" || ev.target.id === "notiz" || ev.target.id === "umfeld") eingabenUebernehmen();
 });
 function zipFreigeben() { Object.values(ui.zipUrls || {}).forEach(u => URL.revokeObjectURL(u)); ui.zipUrls = null; ui.zipDaten = null; }
 
@@ -755,13 +775,18 @@ document.addEventListener("click", async ev => {
     }
     ui.schritt = Math.min(ui.schritt + 1, SCHRITTE.length - 1); }
   else if (akt === "zurueck") { ui.schritt = Math.max(ui.schritt - 1, 0); }
+  else if (akt === "merkmal") { const r = e(ui.id); const m = b.dataset.wert;
+    r.merkmale = r.merkmale.includes(m) ? r.merkmale.filter(x => x !== m) : [...r.merkmale, m]; sichern(ui.id);
+    // nur den Knopf umschalten statt neu zu zeichnen: so springt die Seite nicht nach oben
+    b.classList.toggle("an", r.merkmale.includes(m)); return; }
   else if (akt === "setze") { const r = e(ui.id); const f = b.dataset.feld;
     r[f] = r[f] === b.dataset.wert ? "" : b.dataset.wert; sichern(ui.id); }
   else if (akt === "fertig") { const r = e(ui.id);
     if (!r.besuche.length) r.besuche.push({ start: jetzt(), nachgetragen: true });
     const l = r.besuche[r.besuche.length - 1]; if (!l.ende) l.ende = jetzt();
     r.fertig = true; sichern(ui.id); ui.ansicht = "liste"; zeige("Gespeichert. Nächster Kunde!"); }
-  zeichnen(); window.scrollTo(0, 0);
+  // Beim Antippen von Ja/Nein/Lage an der Stelle bleiben, sonst (Seitenwechsel) nach oben
+  const y = window.scrollY; zeichnen(); window.scrollTo(0, akt === "setze" ? y : 0);
 });
 
 zeichnen();
