@@ -118,6 +118,8 @@
 <input type="file" id="kamFoto" accept="image/*" capture="environment">
 <input type="file" id="kamVideo" accept="video/*" capture="environment">
 <input type="file" id="wahlFoto" accept="image/*" multiple>
+<!-- Mass-Foto: Einzelauswahl = ein Tipp auf das neueste Foto genuegt (ohne "Hinzufuegen") -->
+<input type="file" id="wahlMass" accept="image/*">
 <input type="file" id="wahlVideo" accept="video/*" multiple>
 
 <script>
@@ -288,12 +290,13 @@ async function dateienAufnehmen(dateien) {
     const r = e(kid); if (!r.besuche.length) r.besuche.push({ start: jetzt() }); sichern(kid);
     await ladeMedien(kid);
     zeige(dateien.length === 1 ? "Gespeichert ✓" : dateien.length + " Dateien gespeichert ✓");
+    if (art === "mass") ui.massOffen = null;   // Foto uebernommen -> wieder normale Reihenfolge
   } catch (err) {
     alert("Speichern hat nicht geklappt: " + (err && err.message || err) + "\nBitte noch einmal versuchen.");
   }
   zeichnen();
 }
-["kamFoto", "kamVideo", "wahlFoto", "wahlVideo"].forEach(id =>
+["kamFoto", "kamVideo", "wahlFoto", "wahlVideo", "wahlMass"].forEach(id =>
   document.getElementById(id).addEventListener("change", ev => { const f = [...ev.target.files]; ev.target.value = ""; dateienAufnehmen(f); }));
 
 /* ================= ZIP (ohne Komprimierung - Fotos/Videos sind schon komprimiert) ================= */
@@ -799,8 +802,14 @@ function ansichtKunde() {
   } else if (s === 1) {
     inhalt = `<div class="schritt"><h3>2. Maß rechts</h3>
       <div class="hinweis">In der App <b>Maßband</b> vom <b>rechten Rand des Automaten</b> nach rechts messen, Auslöser drücken und das Bild in Fotos sichern. Automat und Messlinie sollen auf dem Bild sein. Benötigt: <b>90–100 cm</b>.</div>
-      <a class="gross start" id="massbandOeffnen" href="${MASSBAND_LINK}" style="text-align:center;text-decoration:none">📏 Maßband öffnen</a>
-      <button class="gross" data-akt="aufnehmen" data-art="mass" data-quelle="fotos">🖼 Maßband-Foto hinzufügen</button>
+      ${ui.massOffen === k.id
+        // Mirko 03.11.2026: Foto soll ohne Umweg beim Kunden landen. iOS laesst eine Webseite nicht selbst
+        // in die Fotos greifen - deshalb nach der Rueckkehr vom Massband: Uebernehmen-Knopf ganz oben, ein Tipp.
+        ? `<button class="gross start" data-akt="aufnehmen" data-art="mass" data-quelle="mass">🖼 Jetzt Maßband-Foto übernehmen</button>
+           <div class="klein" style="margin:-4px 2px 10px">Das neueste Foto steht in der Auswahl vorne – einmal antippen, fertig.</div>
+           <a class="knopf2" id="massbandOeffnen" href="${MASSBAND_LINK}" style="display:block;text-align:center;text-decoration:none">📏 Maßband noch einmal öffnen</a>`
+        : `<a class="gross start" id="massbandOeffnen" href="${MASSBAND_LINK}" style="text-align:center;text-decoration:none">📏 Maßband öffnen</a>
+           <button class="gross" data-akt="aufnehmen" data-art="mass" data-quelle="mass">🖼 Maßband-Foto hinzufügen</button>`}
       <div class="klein" style="margin:-4px 2px 10px">Öffnet sich die Maßband-App nicht: unter „Mehr“ den Kurzbefehl einrichten.</div>
       ${galerie(k.id, "mass")}
       <label class="feld" for="cm">Rechts frei (cm)</label>
@@ -853,6 +862,8 @@ document.addEventListener("input", ev => {
 function zipFreigeben() { Object.values(ui.zipUrls || {}).forEach(u => URL.revokeObjectURL(u)); ui.zipUrls = null; ui.zipDaten = null; }
 
 document.addEventListener("click", async ev => {
+  // "Massband oeffnen" ist ein Link (Kurzbefehl) - merken, damit beim Zurueckkommen "uebernehmen" oben steht
+  if (ev.target.closest("#massbandOeffnen")) { ui.massOffen = ui.id; setTimeout(zeichnen, 400); return; }
   const b = ev.target.closest("[data-akt]"); if (!b || b.disabled) return;
   const akt = b.dataset.akt;
   if (akt !== "liste" && akt !== "oeffnen") eingabenUebernehmen();
@@ -864,7 +875,8 @@ document.addEventListener("click", async ev => {
   if (akt === "kundeweg") return kundeZuruecksetzen(ui.id);
   if (akt === "aufnehmen") {   // muss direkt im Klick passieren, sonst blockiert iOS die Kamera
     ui.ziel = b.dataset.art;
-    const id = b.dataset.quelle === "kamera" ? (ui.ziel === "video" ? "kamVideo" : "kamFoto") : (ui.ziel === "video" ? "wahlVideo" : "wahlFoto");
+    const id = b.dataset.quelle === "mass" ? "wahlMass"
+      : b.dataset.quelle === "kamera" ? (ui.ziel === "video" ? "kamVideo" : "kamFoto") : (ui.ziel === "video" ? "wahlVideo" : "wahlFoto");
     return document.getElementById(id).click();
   }
   if (akt === "weg") {
