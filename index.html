@@ -391,6 +391,28 @@ async function zipErstellen() {
   } finally { ui.zipLaeuft = false; zeichnen(); }
 }
 
+/* ================= Zuruecksetzen (Mirko 03.11.2026: "nach dem Testen bei null anfangen") ================= */
+const hatDaten = r => r && (r.besuche && r.besuche.length || r.fertig || r.rechtsCm || r.inFrage || r.notiz);
+async function allesZuruecksetzen() {
+  const nKunden = Object.values(erg).filter(hatDaten).length;
+  const nFotos = await tx("readonly", s => req(s.count()));
+  if (!confirm(`Wirklich bei null anfangen?\n\nGelöscht werden die Angaben von ${nKunden} Kunden und ${nFotos} Foto(s) im Werkzeug.\nDie Kundenliste bleibt.`)) return;
+  if (!confirm("Ganz sicher? Das lässt sich nicht rückgängig machen.\n\nSind schon echte Daten dabei: vorher die ZIP sichern.")) return;
+  erg = {}; schreiben(K_ERG, erg);
+  await tx("readwrite", s => req(s.clear()));
+  Object.keys(cache).forEach(k => { (cache[k] || []).forEach(m => m.url && URL.revokeObjectURL(m.url)); delete cache[k]; });
+  zipFreigeben(); ui.ansicht = "liste"; ui.nurOffen = false;
+  zeige("Zurückgesetzt – alles steht auf null."); zeichnen();
+}
+async function kundeZuruecksetzen(kid) {
+  const ids = (await medienVon(kid)).map(m => m.id);
+  if (!confirm(`Diesen Kunden zurücksetzen?\n\nSeine Angaben und ${ids.length} Foto(s) werden gelöscht.`)) return;
+  delete erg[kid]; schreiben(K_ERG, erg);
+  await tx("readwrite", s => Promise.all(ids.map(id => req(s.delete(id)))));
+  await ladeMedien(kid); ui.schritt = 0;
+  zeige("Kunde zurückgesetzt."); zeichnen();
+}
+
 /* ================= Ergebnisse als Datei (fuer den Mac) ================= */
 async function senden() {
   const d = new Date(), z = n => String(n).padStart(2, "0");
@@ -479,6 +501,8 @@ function ansichtMehr() {
         <li>Oben auf den Namen tippen → <b>Umbenennen</b> → genau: <b>${KURZBEFEHL}</b> → Fertig</li>
       </ol>
       <a class="knopf2" href="${MASSBAND_LINK}" style="display:block;text-align:center;text-decoration:none">Jetzt ausprobieren</a></div>
+    <div class="karte"><b>Bei null anfangen</b><p class="klein">Löscht alle Angaben und Fotos im Werkzeug, z. B. nach dem Testen. Die Kundenliste bleibt. Einzelne Kunden lassen sich im Kunden unter Schritt 1 zurücksetzen.</p>
+      <button class="knopf2" data-akt="allesweg" style="color:var(--rot);border-color:#fca5a5">Alles zurücksetzen</button></div>
     <div class="karte"><b>So geht’s</b><p class="klein">Kunde antippen → „Ich bin da“ → „📏 Maßband öffnen“ → messen, Auslöser drücken, Bild in Fotos sichern → zurück zur Besichtigung → „Maßband-Foto hinzufügen“ → Zahl eintragen → kommt in Frage? → „Fertig“. Immer über das Symbol auf dem Home-Bildschirm öffnen – dort liegen Ihre Daten.</p></div>
   </main>`;
 }
@@ -559,7 +583,8 @@ function ansichtKunde() {
               : r.fertig ? `<div class="hinweis" style="background:var(--gruen-hell)">✓ Erledigt. Mit „Weiter“ ansehen oder Fotos nachtragen – er bleibt erledigt.</div>
                   <button class="knopf2" data-akt="ankommen">Noch einmal vor Ort – neu erfassen</button>`
               : `<button class="gross start" data-akt="ankommen">Ich bin da</button>`}
-      ${r.besuche.length ? `<div class="zeiten">Besuche: ${r.besuche.map(b => uhr(b.start) + (b.ende ? "–" + uhr(b.ende).slice(-5) : " (läuft)")).join(", ")}</div>` : ""}</div>`;
+      ${r.besuche.length ? `<div class="zeiten">Besuche: ${r.besuche.map(b => uhr(b.start) + (b.ende ? "–" + uhr(b.ende).slice(-5) : " (läuft)")).join(", ")}</div>` : ""}
+      ${hatDaten(r) || n("mass") ? `<button class="knopf2" data-akt="kundeweg" style="margin-top:14px;color:var(--rot);border-color:#fca5a5">Diesen Kunden zurücksetzen</button>` : ""}</div>`;
   } else if (s === 1) {
     inhalt = `<div class="schritt"><h3>2. Maß rechts</h3>
       <div class="hinweis">In der App <b>Maßband</b> vom <b>rechten Rand des Automaten</b> nach rechts messen, Auslöser drücken und das Bild in Fotos sichern. Automat und Messlinie sollen auf dem Bild sein. Benötigt: <b>90–100 cm</b>.</div>
@@ -613,6 +638,8 @@ document.addEventListener("click", async ev => {
   if (akt === "laden") return document.getElementById("datei").click();
   if (akt === "senden") return senden();
   if (akt === "zipbauen") return zipErstellen();
+  if (akt === "allesweg") return allesZuruecksetzen();
+  if (akt === "kundeweg") return kundeZuruecksetzen(ui.id);
   if (akt === "aufnehmen") {   // muss direkt im Klick passieren, sonst blockiert iOS die Kamera
     ui.ziel = b.dataset.art;
     const id = b.dataset.quelle === "kamera" ? (ui.ziel === "video" ? "kamVideo" : "kamFoto") : (ui.ziel === "video" ? "wahlVideo" : "wahlFoto");
