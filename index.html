@@ -88,6 +88,8 @@
   .bild img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .bild .vid { display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; font-size: 30px; color: #374151; }
   .bild .vid small { font-size: 12px; margin-top: 4px; }
+  .bild button.mont { position: absolute; left: 4px; right: 4px; bottom: 4px; border: 0; border-radius: 8px; padding: 6px 0;
+    background: #1d4ed8ee; color: #fff; font-size: 13px; font-weight: 700; }
   .bild button.weg { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; border-radius: 16px; border: 0;
     background: #111827cc; color: #fff; font-size: 18px; line-height: 32px; padding: 0; }
   .fuss { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid var(--linie);
@@ -198,7 +200,12 @@ const LAGE = { belebt: "stark belebt", mittel: "mittel", ruhig: "ruhig / abgeleg
 const MERKMALE = ["Hauptstraße", "Wohngebiet / Nebenstraße", "Ortsmitte", "Bushaltestelle", "Parkplatz",
   "Supermarkt / Geschäft", "Bäckerei", "Eisdiele", "Gaststätte / Kneipe", "Tankstelle", "Schule", "Gewerbegebiet"];
 function umfeldText(r) { return [...(r.merkmale || []), ...(r.umfeld ? [r.umfeld] : [])].join(", "); }
-const ZIP_ARTEN = ["mass"];   // nur diese Aufnahmen kommen in die ZIP
+const ZIP_ARTEN = ["mass", "montage"];   // nur diese Aufnahmen kommen in die ZIP
+/* Anbau simulieren (Mirko 03.11.2026): neuer Anbauautomat im richtigen Verhaeltnis neben dem vorhandenen.
+   Lage/Groesse relativ zum vorhandenen Automaten (Breite W, Hoehe H): links = rechter Rand + abstand*W,
+   oben = Oberkante + oben*H, Breite = breite*W, Hoehe = hoehe*H. Echte Werte + Bild kommen mit der
+   Kundenliste ("vorlagen", je SC-Typ) - bis dahin ein grauer Platzhalter mit diesen Standardwerten. */
+const VORLAGE_STANDARD = { abstand: 0.03, oben: 0, breite: 0.5, hoehe: 1 };
 // Mirko 03.11.2026: statt Kamera direkt die Maßband-App. Apple bietet dafuer keinen
 // direkten Link (Entwicklerforum 112820) - der offizielle Weg ist ein Kurzbefehl,
 // den eine Webseite starten darf: shortcuts://run-shortcut?name=...
@@ -255,6 +262,7 @@ document.getElementById("datei").addEventListener("change", ev => {
       info.titel = d.titel || "Standort-Besichtigung"; info.auswahl = d.auswahl || "";
       info.vermerk = d.vermerk || "";   // z. B. wer es ausgearbeitet hat - steht in der Datei, nicht im Programm
       info.autor = d.autor || "";       // Name fuer Druck-Wasserzeichen und Foto-Daten
+      info.vorlagen = d.vorlagen || {}; // Anbau-Vorlagen je SC-Typ (Bild + Lage), sonst Platzhalter
       schreiben(K_INFO, info);
       zeige(liste.length + " Standorte geladen.");
       ui.ansicht = "liste"; zeichnen();
@@ -432,6 +440,84 @@ function ansichtZuordnen() {
     <button class="fertig" data-akt="sammelok" ${gewaehlt ? "" : "disabled"}>Übernehmen (${gewaehlt})</button></div>`;
 }
 
+/* ================= Anbau simulieren (Fotomontage) =================
+   Mirko 03.11.2026: "den neuen Anbauautomaten am Sielaff simulieren, im Verhaeltnis zum normalen Automaten,
+   so wie er da jetzt steht". Zwei Tipps: Ecke oben links + unten rechts des vorhandenen Automaten ->
+   Massstab -> Anbau daneben (Vorlage je SC-Typ, sonst grauer Platzhalter). Ins Bild eingebrannt:
+   "Fotomontage - Darstellung ungefaehr", damit es niemand fuer ein echtes Foto haelt. */
+const bildLaden = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+async function montageStarten(mid) {
+  const m = (await medienVon(ui.id)).find(x => x.id === mid); if (!m) return;
+  const b = await createImageBitmap(m.blob, { imageOrientation: "from-image" });
+  if (ui.montage && ui.montage.url) URL.revokeObjectURL(ui.montage.url);
+  ui.montage = { kid: ui.id, quelle: mid, blob: m.blob, url: URL.createObjectURL(m.blob), w: b.width, h: b.height, punkte: [] };
+  ui.ansicht = "montage"; zeichnen(); window.scrollTo(0, 0);
+}
+function montageTipp(ev) {
+  const m = ui.montage, r = ev.target.getBoundingClientRect();
+  if (!m || m.punkte.length >= 2) return;
+  m.punkte.push({ x: (ev.clientX - r.left) / r.width * m.w, y: (ev.clientY - r.top) / r.height * m.h });
+  if (m.punkte.length === 2) return montageRechnen();
+  // nur Markierung + Hinweis ergaenzen, Foto NICHT neu laden (sonst flackert es und der 2. Tipp geht ins Leere - Test 03.11.)
+  document.getElementById("montageFlaeche").insertAdjacentHTML("beforeend", montageMarke(m.punkte[0], m));
+  document.getElementById("montageHinweis").innerHTML = "Jetzt die Ecke <b>unten rechts</b> des Automaten.";
+}
+const montageMarke = (pt, m) => `<div style="position:absolute;left:${pt.x / m.w * 100}%;top:${pt.y / m.h * 100}%;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;border:3px solid #fff;background:#1d4ed8;box-shadow:0 0 0 2px #1d4ed8;pointer-events:none"></div>`;
+async function montageRechnen() {
+  const m = ui.montage, k = kunden.find(x => x.id === m.kid);
+  const [p, q] = m.punkte, x1 = Math.min(p.x, q.x), x2 = Math.max(p.x, q.x), y1 = Math.min(p.y, q.y), y2 = Math.max(p.y, q.y);
+  const W = x2 - x1, H = y2 - y1;
+  if (W < 20 || H < 20) { alert("Die zwei Ecken liegen zu dicht beieinander. Bitte oben links und unten rechts am Automaten tippen."); m.punkte = []; return zeichnen(); }
+  const v = (info.vorlagen || {})[k.sc] || null, g = Object.assign({}, VORLAGE_STANDARD, v || {});
+  const ax = x2 + g.abstand * W, ay = y1 + g.oben * H, aw = g.breite * W, ah = g.hoehe * H;
+  const fs = Math.max(18, Math.round(Math.max(m.w, ax + aw) * 0.03)), band = Math.round(fs * 1.9);
+  const cw = Math.max(m.w, Math.ceil(ax + aw + 0.04 * W)), ch = Math.max(m.h, Math.ceil(ay + ah + 0.04 * H)) + band;
+  const c = document.createElement("canvas"); c.width = cw; c.height = ch; const x = c.getContext("2d");
+  x.fillStyle = "#d1d5db"; x.fillRect(0, 0, cw, ch);                 // falls der Anbau ueber das Foto hinausragt
+  x.drawImage(await createImageBitmap(m.blob, { imageOrientation: "from-image" }), 0, 0);
+  if (v && v.bild) {
+    x.drawImage(await bildLaden(v.bild), ax, ay, aw, ah);
+  } else {                                                            // Platzhalter bis zur Vorlage vom Freitag
+    x.fillStyle = "rgba(17,24,39,0.86)"; x.fillRect(ax, ay, aw, ah);
+    x.strokeStyle = "#ffffff"; x.lineWidth = Math.max(2, aw * 0.015); x.setLineDash([aw * 0.06, aw * 0.04]); x.strokeRect(ax, ay, aw, ah); x.setLineDash([]);
+    x.fillStyle = "#ffffff"; x.textAlign = "center"; x.textBaseline = "middle";
+    const f2 = Math.max(14, Math.round(aw / 7));
+    x.font = `bold ${f2}px -apple-system, Helvetica, Arial, sans-serif`; x.fillText("Anbau", ax + aw / 2, ay + ah / 2 - f2 * 0.7);
+    x.font = `${Math.round(f2 * 0.7)}px -apple-system, Helvetica, Arial, sans-serif`;
+    x.fillText(scText(k.sc), ax + aw / 2, ay + ah / 2 + f2 * 0.2); x.fillText("(Platzhalter)", ax + aw / 2, ay + ah / 2 + f2 * 0.95);
+  }
+  x.fillStyle = "#0f2a4a"; x.fillRect(0, ch - band, cw, band);       // Hinweis fest im Bild
+  x.fillStyle = "#ffffff"; x.textAlign = "left"; x.textBaseline = "middle";
+  x.font = `bold ${fs}px -apple-system, Helvetica, Arial, sans-serif`;
+  x.fillText(`Fotomontage – Darstellung ungefähr · Anbau ${scText(k.sc)}`, fs * 0.6, ch - band / 2);
+  m.ergebnis = await new Promise(res => c.toBlob(res, "image/jpeg", 0.88));
+  if (m.ergebnisUrl) URL.revokeObjectURL(m.ergebnisUrl);
+  m.ergebnisUrl = URL.createObjectURL(m.ergebnis);
+  zeichnen();
+}
+async function montageSpeichern() {
+  const m = ui.montage; if (!m || !m.ergebnis) return;
+  await medienSpeichern({ id: m.kid + "|" + Date.now() + "|" + Math.random().toString(36).slice(2, 7), kunde: m.kid, art: "montage",
+    typ: "image/jpeg", name: "montage.jpg", blob: m.ergebnis, zeit: jetzt(), quelle: m.quelle });
+  montageSchliessen(); await ladeMedien(ui.id); ui.ansicht = "kunde"; ui.schritt = 1; zeichnen();
+  zeige("Simulation gespeichert ✓");
+}
+function montageSchliessen() { const m = ui.montage; if (m) { URL.revokeObjectURL(m.url); if (m.ergebnisUrl) URL.revokeObjectURL(m.ergebnisUrl); } ui.montage = null; }
+function ansichtMontage() {
+  const m = ui.montage, k = kunden.find(x => x.id === m.kid), v = (info.vorlagen || {})[k.sc];
+  const n = m.punkte.length;
+  const schritt = m.ergebnis ? "So würde es mit Anbau aussehen."
+    : n === 0 ? "Tippen Sie auf die Ecke <b>oben links</b> des vorhandenen Automaten." : "Jetzt die Ecke <b>unten rechts</b> des Automaten.";
+  return `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="montageab">‹ Zurück</button></div><h1>Anbau simulieren</h1>
+    <div class="unter">${esc(k.nr)} ${esc(k.name)} · ${esc(scText(k.sc))}${v && v.bild ? "" : " · Platzhalter (Vorlage folgt)"}</div></div>
+  <main><div class="hinweis" id="montageHinweis">${schritt}</div>
+    ${m.ergebnis ? `<img src="${m.ergebnisUrl}" alt="" style="width:100%;display:block;border-radius:10px;border:1px solid #d1d5db">`
+      : `<div id="montageFlaeche" style="position:relative"><img id="montageBild" src="${m.url}" alt="" style="width:100%;display:block;border-radius:10px;touch-action:manipulation">${m.punkte.map(pt => montageMarke(pt, m)).join("")}</div>`}
+  </main>
+  <div class="fuss">${m.ergebnis || n ? `<button data-akt="montagereset">Neu setzen</button>` : `<button data-akt="montageab">Abbrechen</button>`}
+    ${m.ergebnis ? `<button class="fertig" data-akt="montageok">Speichern</button>` : ""}</div>`;
+}
+
 /* ================= ZIP (ohne Komprimierung - Fotos/Videos sind schon komprimiert) ================= */
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n;
   for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
@@ -486,7 +572,7 @@ function zipPlan(medienListe) {
 }
 function ordnerName(k) { return sauber(`${k.nr} ${k.name} - ${k.ort}`); }
 const OBER = { ja: "1 Kommt in Frage", nein: "2 Kommt nicht in Frage" };
-const ART_NAME = { front: "Foto frontal", mass: "Maß rechts", video: "Video" };
+const ART_NAME = { front: "Foto frontal", mass: "Maß rechts", video: "Video", montage: "Mit Anbau (Fotomontage)" };
 function dateiNamen(medien) {
   const zaehl = {};
   return medien.map(m => { zaehl[m.art] = (zaehl[m.art] || 0) + 1;
@@ -534,7 +620,9 @@ ${z("Rechts frei", (r.rechtsCm ? `<b>${esc(r.rechtsCm)} cm</b>` : "–") + (r.re
 ${z("Lage", esc(LAGE[r.lage] || "–"))}${z("Umfeld", umfeld || "–")}${z("Kommt in Frage", esc(r.inFrage || "–"))}
 ${z("Notiz", esc(r.notiz || "–"))}${z("Besichtigt", esc(besuchsTage(r).join(", ") || "–"))}
 </table>
-<div class="fotos">${urls.map((u, i) => `<img src="${u}" alt="Maß-Foto ${i + 1}">`).join("")}</div>
+<div class="fotos">${urls.filter(b => b.art !== "montage").map((b, i) => `<img src="${b.url}" alt="Maß-Foto ${i + 1}">`).join("")}</div>
+${urls.some(b => b.art === "montage") ? `<h2 style="font-size:17px;margin:18px 0 4px">${MONTAGE_TEXT}</h2>
+<div class="fotos">${urls.filter(b => b.art === "montage").map((b, i) => `<img src="${b.url}" alt="Mit Anbau ${i + 1}">`).join("")}</div>` : ""}
 ${info.vermerk ? `<footer>${esc(info.vermerk)}</footer>` : ""}
 </div></td></tr></tbody></table></body></html>`;
 }
@@ -619,13 +707,16 @@ async function uebersichtBilder(plan, stempel) {
   for (const x of [...plan.ja, ...plan.nein]) {
     bilder[x.k.id] = [];
     // 1200 px: gross genug zum Vergroessern am PC, klein genug fuer einen Mail-Anhang
-    for (const m of x.medien) bilder[x.k.id].push(await alsDatenUrl(stempel.get(m.id) || m.blob, 1200));
+    for (const m of x.medien) bilder[x.k.id].push({ art: m.art, url: await alsDatenUrl(stempel.get(m.id) || m.blob, 1200) });
   }
   return bilder;
 }
+const MONTAGE_TEXT = "Mit Anbau – Fotomontage, Darstellung ungefähr";
 function uebersicht(plan, bilder) {
   const karte = (x, gruppe) => { const k = x.k, r = x.r;
-    const fotos = (bilder[k.id] || []).map((u, i) => `<details><summary><img src="${u}" alt="Maß-Foto ${i + 1}"></summary></details>`).join("");
+    const klein = (liste, alt) => liste.map((b, i) => `<details><summary><img src="${b.url}" alt="${alt} ${i + 1}"></summary></details>`).join("");
+    const mass = (bilder[k.id] || []).filter(b => b.art !== "montage"), mont = (bilder[k.id] || []).filter(b => b.art === "montage");
+    const fotos = klein(mass, "Maß-Foto") + (mont.length ? `<div class="grau" style="margin:6px 0 4px">${MONTAGE_TEXT}</div>${klein(mont, "Mit Anbau")}` : "");
     return `<div class="karte ${gruppe}">
       <div class="kopfzeile"><span class="nr">${esc(k.nr)}</span> <b>${esc(k.name)}</b>${k.name2 ? ` <span class="grau">· ${esc(k.name2)}</span>` : ""}</div>
       <div>${esc(adresse(k))}, ${esc(k.plz)} ${esc(k.ort)}</div>
@@ -778,6 +869,7 @@ function zeichnen() {
   if (ui.ansicht === "mehr") return app.innerHTML = ansichtMehr();
   if (ui.ansicht === "zip") return app.innerHTML = ansichtZip();
   if (ui.ansicht === "zuordnen") return app.innerHTML = ansichtZuordnen();
+  if (ui.ansicht === "montage" && ui.montage) return app.innerHTML = ansichtMontage();
   app.innerHTML = ansichtListe();
   const s = document.getElementById("suche");
   if (s && ui.fokus) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
@@ -915,7 +1007,8 @@ function galerie(kid, art) {
   const m = (cache[kid] || []).filter(x => x.art === art);
   if (!m.length) return "";
   return `<div class="bilder">${m.map(x => `<div class="bild">${x.url ? `<img src="${x.url}" alt="">`
-    : `<div class="vid">🎥<small>${mb(x.groesse)}</small></div>`}<button class="weg" data-akt="weg" data-mid="${esc(x.id)}" aria-label="Löschen">×</button></div>`).join("")}</div>`;
+    : `<div class="vid">🎥<small>${mb(x.groesse)}</small></div>`}<button class="weg" data-akt="weg" data-mid="${esc(x.id)}" aria-label="Löschen">×</button>
+    ${art === "mass" && x.url ? `<button class="mont" data-akt="montage" data-mid="${esc(x.id)}">🧩 Anbau</button>` : ""}</div>`).join("")}</div>`;
 }
 function knoepfe(art, haupt, zweit) {
   return `<button class="gross start" data-akt="aufnehmen" data-art="${art}" data-quelle="${haupt.q}">${haupt.t}</button>
@@ -950,6 +1043,8 @@ function ansichtKunde() {
            <button class="gross" data-akt="aufnehmen" data-art="mass" data-quelle="mass">🖼 Maßband-Foto hinzufügen</button>`}
       <div class="klein" style="margin:-4px 2px 10px">Öffnet sich die Maßband-App nicht: unter „Mehr“ den Kurzbefehl einrichten.</div>
       ${galerie(k.id, "mass")}
+      ${n("mass") ? (n("montage") ? `<label class="feld">${MONTAGE_TEXT}</label>${galerie(k.id, "montage")}`
+        : `<div class="klein" style="margin:-4px 2px 10px">🧩 „Anbau“ auf einem Foto antippen = neuen Anbauautomaten daneben simulieren.</div>`) : ""}
       <label class="feld" for="cm">Rechts frei (cm)</label>
       <input class="cm" id="cm" type="number" inputmode="numeric" min="0" max="999" placeholder="z. B. 95" value="${esc(r.rechtsCm)}">
       <label class="feld">Reichen 90–100 cm?</label>${janein("rechtsFrei", r.rechtsFrei)}</div>`;
@@ -1002,6 +1097,7 @@ function zipFreigeben() { Object.values(ui.zipUrls || {}).forEach(u => URL.revok
 document.addEventListener("click", async ev => {
   // "Massband oeffnen" ist ein Link (Kurzbefehl) - merken, damit beim Zurueckkommen "uebernehmen" oben steht
   if (ev.target.closest("#massbandOeffnen")) { ui.massOffen = ui.id; setTimeout(zeichnen, 400); return; }
+  if (ev.target.id === "montageBild") return montageTipp(ev);
   const b = ev.target.closest("[data-akt]"); if (!b || b.disabled) return;
   const akt = b.dataset.akt;
   if (akt !== "liste" && akt !== "oeffnen") eingabenUebernehmen();
@@ -1011,6 +1107,10 @@ document.addEventListener("click", async ev => {
   if (akt === "uebersicht") return uebersichtTeilen();
   if (akt === "sammeln") return document.getElementById("wahlSammel").click();
   if (akt === "sammelok") return sammelUebernehmen();
+  if (akt === "montage") return montageStarten(b.dataset.mid);
+  if (akt === "montageok") return montageSpeichern();
+  if (akt === "montagereset") { ui.montage.punkte = []; ui.montage.ergebnis = null; return zeichnen(); }
+  if (akt === "montageab") { montageSchliessen(); ui.ansicht = "kunde"; return zeichnen(); }
   if (akt === "allesweg") return allesZuruecksetzen();
   if (akt === "kundeweg") return kundeZuruecksetzen(ui.id);
   if (akt === "aufnehmen") {   // muss direkt im Klick passieren, sonst blockiert iOS die Kamera
