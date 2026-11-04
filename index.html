@@ -715,6 +715,9 @@ async function uebersichtBilder(plan, stempel) {
   return bilder;
 }
 const MONTAGE_TEXT = "Mit Anbau – Fotomontage, Darstellung ungefähr";
+// Mirko 04.11.2026: "muss unbedingt erwaehnt werden, dass alle Standorte von mir angefahren und die Fotos
+// live vor Ort gemacht worden sind, mit groben echten Massdaten" - Seite 1 des PDFs und ZIP-Vorschau
+const VOR_ORT = "Alle Standorte in diesem Dokument habe ich persönlich angefahren. Die Fotos sind live vor Ort entstanden, die Maße wurden vor Ort gemessen – grobe, aber echte Messwerte.";
 function uebersicht(plan, bilder) {
   const karte = (x, gruppe) => { const k = x.k, r = x.r;
     const klein = (liste, alt) => liste.map((b, i) => `<details><summary><img src="${b.url}" alt="${alt} ${i + 1}"></summary></details>`).join("");
@@ -899,6 +902,7 @@ async function pdfErstellen(plan, stempel, fortschritt) {
     doc.y += 6; doc.rechteck(RAND, doc.y, B, h, "#eef2ff"); doc.rechteck(RAND, doc.y, 3, h, "#0f2a4a");
     z.forEach((l, i) => doc.text(l, RAND + 12, doc.y + 7 + i * 13.2, 10)); doc.y += h + 10;
   }
+  doc.y += doc.absatz(VOR_ORT, RAND, doc.y, B, 10, { fett: true, farbe: "#0f2a4a" }) + 8;
   doc.text("Benötigt werden rechts neben dem Automaten 90–100 cm. Je Standort folgt eine Seite mit allen Angaben und Fotos.", RAND, doc.y, 9, { farbe: "#6b7280" });
   doc.y += 20;
   const SP = [[0, 34, "Nr."], [34, 160, "Kunde / Dulder"], [194, 112, "Ort"], [306, 62, "Rechts frei"], [368, 40, "reicht"], [408, 107, "Lage"]];
@@ -940,7 +944,7 @@ async function pdfErstellen(plan, stempel, fortschritt) {
       ["Typ / Anbau", `${k.typ || "–"} · ${scText(k.sc)} · Turnus ${k.turnus || "–"}`],
       ["Rechts frei", (r.rechtsCm ? r.rechtsCm + " cm" : "–") + (r.rechtsFrei ? " · 90–100 cm reichen: " + r.rechtsFrei : ""), true],
       ["Lage", LAGE[r.lage] || "–"], ["Umfeld", umfeldText(r) || "–"], ["Notiz", r.notiz || "–"],
-      ["Besichtigt", besuchsTage(r).join(", ") || "–"]];
+      ["Vor Ort besichtigt", besuchsTage(r).join(", ") || "–"]];
     for (const [l, w, fett] of zeilen) {
       doc.text(l, RAND, doc.y + 1, 9, { farbe: "#6b7280" });
       doc.y += Math.max(14, doc.absatz(w, RAND + 92, doc.y, B - 92, 10, { fett })) + 3;
@@ -1114,7 +1118,7 @@ function pdfTexte(roh) {
   }
   return seiten;
 }
-const FELDER = ["Adresse", "Telefon", "Automat", "Typ / Anbau", "Rechts frei", "Lage", "Umfeld", "Kommt in Frage", "Notiz", "Besichtigt"];
+const FELDER = ["Adresse", "Telefon", "Automat", "Typ / Anbau", "Rechts frei", "Lage", "Umfeld", "Kommt in Frage", "Notiz", "Besichtigt", "Vor Ort besichtigt"];
 function angabenAusPdf(roh) {   // -> [{nr, name, inFrage, felder: {Bezeichnung: Wert}}]
   const aus = [];
   for (const ops of pdfTexte(roh)) {
@@ -1156,7 +1160,7 @@ function ergebnisAus(felder, inFrage, merkmale) {
   }
   const kif = w("Kommt in Frage");
   r.inFrage = inFrage || (kif === "ja" || kif === "nein" ? kif : "");
-  for (const m of w("Besichtigt").matchAll(/(\d{2})\.(\d{2})\.(\d{4})/g)) {
+  for (const m of (w("Vor Ort besichtigt") || w("Besichtigt")).matchAll(/(\d{2})\.(\d{2})\.(\d{4})/g)) {
     const t = new Date(+m[3], +m[2] - 1, +m[1], 12).toISOString(); r.besuche.push({ start: t, ende: t, wieder: true });
   }
   return r;
@@ -1355,7 +1359,7 @@ function ansichtZip() {
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
   const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
-    <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}${info.vermerk ? `<div class="klein" style="margin-top:4px">🔒 „${esc(info.vermerk)}“ steht oben auf jeder Seite und eingebrannt in jedem Foto.</div>` : ""}</div>
+    <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}<div class="klein" style="margin-top:4px"><b>„${esc(VOR_ORT)}“</b></div>${info.vermerk ? `<div class="klein" style="margin-top:4px">🔒 „${esc(info.vermerk)}“ steht oben auf jeder Seite und eingebrannt in jedem Foto.</div>` : ""}</div>
       <div class="klein" style="margin-top:6px">In der ZIP steht das PDF zuerst („1 ${esc(pdfName())}“), darunter der Ordner „${FOTO_ORDNER}“. ${standorte(plan.ja.length + plan.nein.length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
     <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
     <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur PDF teilen (eine Datei, z. B. für die Mail)</button>
