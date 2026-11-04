@@ -53,6 +53,7 @@
   .status.laeuft { background: var(--orange-hell); color: var(--orange); }
   .status.ja { background: var(--gruen-hell); color: var(--gruen); }
   .status.nein { background: var(--rot-hell); color: var(--rot); }
+  .status.vielleicht { background: #fef9c3; color: #a16207; }
   .karte { background: #fff; border-radius: 14px; padding: 14px; border: 1px solid var(--linie); margin-bottom: 12px; }
   .karte h2 { margin: 0 0 4px; font-size: 21px; }
   .karte .z2 { color: #374151; font-size: 15px; margin-bottom: 8px; }
@@ -73,6 +74,7 @@
   .janein button { flex: 1; font-size: 20px; font-weight: 700; padding: 18px 0; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; color: var(--text); }
   .janein button.ja.an { background: var(--gruen); border-color: var(--gruen); color: #fff; }
   .janein button.nein.an { background: var(--rot); border-color: var(--rot); color: #fff; }
+  .janein button.vielleicht.an { background: #ca8a04; border-color: #ca8a04; color: #fff; }
   .wahl { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
   .wahl button { font-size: 20px; font-weight: 700; padding: 18px 0; border-radius: 12px; border: 2px solid #d1d5db; background: #fff; color: var(--text); }
   .wahl button.an { background: var(--blau2); border-color: var(--blau2); color: #fff; }
@@ -135,7 +137,7 @@ const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
 // Tourenplan-Karte aus der Kundenliste (eigener Schluessel: gross, und darf das Laden der Liste nie verhindern)
 const K_KARTE = "bes.karte";
 // Fassung des Programms - gleiche Nummer wie CACHE in sw.js; steht unter "Mehr"
-const FASSUNG = "24";
+const FASSUNG = "25";
 /* Mirko 04.11.2026: "koennen wir nicht einen Knopf aktualisieren einbauen, der neu laedt - bei mir klappt es
    mit neu laden in der App nicht". Loescht NUR den Programm-Zwischenspeicher (Cache Storage) - Angaben
    (localStorage) und Fotos (IndexedDB) bleiben unberuehrt - und holt die Seite frisch vom Server. */
@@ -242,7 +244,7 @@ function sichern(id) { if (id) erg[id].geaendert = jetzt(); schreiben(K_ERG, erg
 function tag(iso, mitJahr) { return new Date(iso).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", ...(mitJahr ? { year: "numeric" } : {}) }); }
 function besuchsTage(r) { return [...new Set((r.besuche || []).map(b => tag(b.start, true)))]; }
 function zeitraum(plan) {
-  const alle = [...plan.ja, ...plan.nein].flatMap(x => (x.r.besuche || []).map(b => b.start)).sort();
+  const alle = bewertet(plan).flatMap(x => (x.r.besuche || []).map(b => b.start)).sort();
   if (!alle.length) return "";
   const von = tag(alle[0], false), bis = tag(alle[alle.length - 1], true);
   return tag(alle[0], true) === bis ? `Besichtigung ${bis}` : `Besichtigungen ${von} bis ${bis}`;
@@ -266,6 +268,7 @@ function status(id) {
   if (!r.fertig) return { k: "laeuft", t: "begonnen" };
   if (r.inFrage === "ja") return { k: "ja", t: "✓ kommt in Frage" };
   if (r.inFrage === "nein") return { k: "nein", t: "✓ kommt nicht in Frage" };
+  if (r.inFrage === "vielleicht") return { k: "vielleicht", t: "✓ kommt vielleicht in Frage" };
   return { k: "ja", t: "✓ fertig" };
 }
 
@@ -585,16 +588,29 @@ async function zipBauen(eintraege, fortschritt) {   // eintraege: [{name, blob}]
 const sauber = s => String(s || "").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
 function zipPlan(medienListe) {
   const proKunde = {}; medienListe.forEach(m => (proKunde[m.kunde] = proKunde[m.kunde] || []).push(m));
-  const plan = { ja: [], nein: [], offen: [] };
+  const plan = { ja: [], vielleicht: [], nein: [], offen: [] };
   for (const k of kunden) {
     const r = erg[k.id] || {};
     const m = (proKunde[k.id] || []).filter(x => ZIP_ARTEN.includes(x.art)).sort((a, b) => a.zeit.localeCompare(b.zeit));
-    const eintrag = { k, r, medien: m };
-    if (r.inFrage === "ja") plan.ja.push(eintrag); else if (r.inFrage === "nein") plan.nein.push(eintrag); else plan.offen.push(eintrag);
+    (plan[ERGEBNIS.some(g => g.k === r.inFrage) ? r.inFrage : "offen"]).push({ k, r, medien: m });
   }
   return plan;
 }
 function ordnerName(k) { return sauber(`${nrSortierbar(k.nr)} ${k.name} - ${k.ort}`); }
+// Mirko 04.11.2026: "bei kommt in Frage / kommt nicht in Frage auch ein kommt vielleicht in Frage".
+// Reihenfolge hier = Reihenfolge in PDF, ZIP und Vorschau.
+const ERGEBNIS = [
+  { k: "ja", titel: "Kommt in Frage", klein: "kommt in Frage", farbe: "#047857" },
+  { k: "vielleicht", titel: "Kommt vielleicht in Frage", klein: "kommt vielleicht in Frage", farbe: "#a16207" },
+  { k: "nein", titel: "Kommt nicht in Frage", klein: "kommt nicht in Frage", farbe: "#b91c1c" }];
+const bewertet = plan => ERGEBNIS.flatMap(g => plan[g.k]);
+// Ordner in der ZIP, durchnummeriert nur ueber die Gruppen, die es gibt ("1 Kommt in Frage", "2 Kommt nicht in Frage" ...)
+function oberOrdner(plan) {
+  const aus = {}; let n = 0;
+  for (const g of ERGEBNIS) if (plan[g.k].length || g.k !== "vielleicht") aus[g.k] = `${++n} ${g.titel}`;
+  return aus;
+}
+// alte Steckbrief-ZIP (03.11.) und Test: feste Namen der beiden Ordner von damals
 const OBER = { ja: "1 Kommt in Frage", nein: "2 Kommt nicht in Frage" };
 const ART_NAME = { front: "Foto frontal", mass: "Maß rechts", video: "Video", montage: "Mit Anbau (Fotomontage)" };
 function dateiNamen(medien) {
@@ -716,7 +732,7 @@ async function mitExif(blob, felder) {
   return new Blob([buf.slice(0, pos), app1, buf.slice(pos)], { type: "image/jpeg" });
 }
 async function stempelAlle(plan, fortschritt) {
-  const fertig = new Map(), alle = [...plan.ja, ...plan.nein]; let n = 0;
+  const fertig = new Map(), alle = bewertet(plan); let n = 0;
   const gesamt = alle.reduce((s, x) => s + x.medien.length, 0);
   for (const x of alle) {
     const k = x.k, tage = besuchsTage(x.r).join(", ");
@@ -906,11 +922,11 @@ async function pdfErstellen(plan, stempel, fortschritt) {
     doc.linie(RAND, 26, doc.s.w - RAND, 26, "#d1d5db");
     doc.y = 46;
   };
-  const alle = [...plan.ja, ...plan.nein];
+  const alle = bewertet(plan);   // ja, vielleicht, nein - je Gruppe in Fahrreihenfolge
   // ---- Seite 1: Uebersicht ----
   neu();
   doc.text(info.titel || "Standort-Besichtigung", RAND, doc.y, 20, { fett: true }); doc.y += 30;
-  doc.text(`Stand ${new Date().toLocaleDateString("de-DE")} · ${standorte(alle.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage · ${plan.nein.length} nicht`, RAND, doc.y, 10, { farbe: "#374151" });
+  doc.text(`Stand ${new Date().toLocaleDateString("de-DE")} · ${standorte(alle.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage${plan.vielleicht.length ? ` · ${plan.vielleicht.length} vielleicht` : ""} · ${plan.nein.length} nicht`, RAND, doc.y, 10, { farbe: "#374151" });
   doc.y += 15;
   const zr = zeitraum(plan); if (zr) { doc.text(zr, RAND, doc.y, 10, { farbe: "#374151" }); doc.y += 15; }
   if (info.auswahl) {
@@ -937,8 +953,7 @@ async function pdfErstellen(plan, stempel, fortschritt) {
     });
     doc.y += 12;
   };
-  tabelle(plan.ja, "Kommt in Frage", "#047857");
-  tabelle(plan.nein, "Kommt nicht in Frage", "#b91c1c");
+  for (const g of ERGEBNIS) if (plan[g.k].length || g.k !== "vielleicht") tabelle(plan[g.k], g.titel, g.farbe);
   if (plan.offen.length) {
     if (doc.y > UNTEN - 50) neu();
     doc.text(`Noch nicht besichtigt (${plan.offen.length})`, RAND, doc.y, 11, { fett: true, farbe: "#374151" }); doc.y += 16;
@@ -957,10 +972,10 @@ async function pdfErstellen(plan, stempel, fortschritt) {
   // ---- je Kunde eine Seite ----
   let fertigeBilder = 0; const alleBilder = alle.reduce((s, e) => s + e.medien.length, 0);
   for (const e of alle) {
-    const k = e.k, r = e.r, ja = r.inFrage === "ja";
+    const k = e.k, r = e.r, g = ERGEBNIS.find(x => x.k === r.inFrage);
     neu();
     doc.text(`${k.nr} · ${k.name}`, RAND, doc.y, 18, { fett: true });
-    doc.text(ja ? "kommt in Frage" : "kommt nicht in Frage", PDF_W - RAND, doc.y + 4, 11, { fett: true, rechts: true, farbe: ja ? "#047857" : "#b91c1c" });
+    doc.text(g.klein, PDF_W - RAND, doc.y + 4, 11, { fett: true, rechts: true, farbe: g.farbe });
     doc.y += 24;
     if (k.name2) { doc.text(k.name2, RAND, doc.y, 11, { farbe: "#6b7280" }); doc.y += 16; }
     doc.y += 4;
@@ -1025,7 +1040,7 @@ async function uebersichtTeilen() {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
   try {
     const plan = zipPlan(await medienAlle());
-    if (!plan.ja.length && !plan.nein.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Nein“."); return; }
+    if (!bewertet(plan).length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Vielleicht/Nein“."); return; }
     const stempel = await stempelAlle(plan, (n, g) => zeige(`Fotos werden beschriftet … ${n} / ${g}`, 20000));
     const pdf = await pdfErstellen(plan, stempel, (n, g) => zeige(`PDF wird erstellt … Foto ${n} / ${g}`, 20000));
     const datei = new File([pdf], pdfName(), { type: "application/pdf" });
@@ -1040,7 +1055,7 @@ async function zipErstellen() {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
   try {
     const plan = zipPlan(await medienAlle());
-    if (!plan.ja.length && !plan.nein.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Nein“ – die ZIP wäre leer."); return; }
+    if (!bewertet(plan).length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Vielleicht/Nein“ – die ZIP wäre leer."); return; }
     const eintraege = [];
     const stempel = await stempelAlle(plan, (n, g) => zeige(`Fotos werden beschriftet … ${n} / ${g}`, 20000));
     const pdf = await pdfErstellen(plan, stempel, (n, g) => zeige(`PDF wird erstellt … Foto ${n} / ${g}`, 20000));
@@ -1054,8 +1069,9 @@ async function zipErstellen() {
       eintraege.push({ name: KARTE_DATEI, blob: await mitExif(bild, [[0x010E, info.vermerk], [0x013B, info.autor],
         [0x8298, info.autor ? `(c) ${info.autor} - ${info.titel || ""}` : ""]]) });
     }
-    for (const gruppe of ["ja", "nein"]) for (const x of plan[gruppe]) {
-      const basis = `${fotoOrdner()}/${OBER[gruppe]}/${ordnerName(x.k)}/`;
+    const ober = oberOrdner(plan);
+    for (const g of ERGEBNIS) for (const x of plan[g.k]) {
+      const basis = `${fotoOrdner()}/${ober[g.k]}/${ordnerName(x.k)}/`;
       const namen = dateiNamen(x.medien);
       x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: stempel.get(m.id) || m.blob }));   // beschriftete Fassung
     }
@@ -1160,7 +1176,7 @@ function angabenAusPdf(roh) {   // -> [{nr, name, inFrage, felder: {Bezeichnung:
       if (o.fett && o.gr === 18 && o.x === RAND && o.t.includes(" · ")) {   // Kundenseite: "W1 · Name"
         const i = o.t.indexOf(" · "); akt = { nr: o.t.slice(0, i), name: o.t.slice(i + 3), felder: {} }; aus.push(akt); feld = null;
       } else if (!akt) continue;
-      else if (o.fett && o.gr === 11 && /^kommt (nicht )?in Frage$/.test(o.t)) akt.inFrage = o.t.includes("nicht") ? "nein" : "ja";
+      else if (o.fett && o.gr === 11 && ERGEBNIS.some(g => g.klein === o.t)) akt.inFrage = ERGEBNIS.find(g => g.klein === o.t).k;
       else if (!o.fett && o.gr === 9 && o.x === RAND && FELDER.includes(o.t)) { feld = o.t; akt.felder[feld] = ""; }
       else if (feld && o.gr === 10 && o.x === RAND + 92) akt.felder[feld] += (akt.felder[feld] ? " " : "") + o.t;   // umbrochene Zeilen
       else feld = null;
@@ -1192,7 +1208,7 @@ function ergebnisAus(felder, inFrage, merkmale) {
     r.merkmale = teile.filter(t => MERKMALE.includes(t)); r.umfeld = teile.filter(t => !MERKMALE.includes(t)).join(", ");
   }
   const kif = w("Kommt in Frage");
-  r.inFrage = inFrage || (kif === "ja" || kif === "nein" ? kif : "");
+  r.inFrage = inFrage || (ERGEBNIS.some(g => g.k === kif) ? kif : "");
   for (const m of (w("Vor Ort besichtigt") || w("Besichtigt")).matchAll(/(\d{2})\.(\d{2})\.(\d{4})/g)) {
     const t = new Date(+m[3], +m[2] - 1, +m[1], 12).toISOString(); r.besuche.push({ start: t, ende: t, wieder: true });
   }
@@ -1238,7 +1254,8 @@ async function zipEinlesen(datei) {
       const k = teile.length >= 2 ? nachOrdner[teile[teile.length - 2]] : null;
       if (!k) { if (teile.length >= 3 && /\.(jpe?g|png)$/i.test(dname)) fremd++; continue; }
       const f = fund(k);
-      if (teile.includes(OBER.ja)) f.gruppe = "ja"; else if (teile.includes(OBER.nein)) f.gruppe = "nein";
+      // Ordner "1 Kommt in Frage", "2 Kommt vielleicht in Frage" ... - Nummer davor egal
+      const g = ERGEBNIS.find(x => teile.some(t => t.replace(/^\d+ /, "") === x.titel)); if (g) f.gruppe = g.k;
       if (dname === "Steckbrief.html") {
         const s = angabenAusSteckbrief(await (await e.inhalt()).text());
         if (!f.r) f.r = ergebnisAus(s.felder, "", s.merkmale);
@@ -1394,14 +1411,14 @@ function ansichtZip() {
       ${mini ? `<div class="mini">${mini}</div>` : ""}
       <div class="klein">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} · reicht: ${esc(r.rechtsFrei || "–")} · Lage: ${esc(LAGE[r.lage] || "–")}${umfeldText(r) ? " (" + esc(umfeldText(r).slice(0, 60)) + ")" : ""}${r.notiz ? " · " + esc(r.notiz.slice(0, 50)) : ""}</div>
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
-  const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
+  const groesse = bewertet(plan).reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
     <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte${karteHolen() ? ", dann die <b>Tourenplan-Karte</b>" : ""}, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}<div class="klein" style="margin-top:4px"><b>„${esc(VOR_ORT)}“</b></div>${info.vermerk ? `<div class="klein" style="margin-top:4px">„${esc(info.vermerk)}“ steht dezent oben auf jeder Seite und klein unter dem Kundennamen auf jedem Foto.</div>` : ""}</div>
-      <div class="klein" style="margin-top:6px">In der ZIP steht das PDF zuerst („1 ${esc(pdfName())}“)${karteHolen() ? `, dann „${KARTE_DATEI}“` : ""}, darunter der Ordner „${fotoOrdner()}“. ${standorte(plan.ja.length + plan.nein.length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
+      <div class="klein" style="margin-top:6px">In der ZIP steht das PDF zuerst („1 ${esc(pdfName())}“)${karteHolen() ? `, dann „${KARTE_DATEI}“` : ""}, darunter der Ordner „${fotoOrdner()}“. ${standorte(bewertet(plan).length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
     <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
     <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur PDF teilen (eine Datei, z. B. für die Mail)</button>
-    <div class="ordner">${OBER.ja} (${plan.ja.length})</div>${plan.ja.map(x => karte(x, "ja")).join("") || `<p class="klein">–</p>`}
-    <div class="ordner">${OBER.nein} (${plan.nein.length})</div>${plan.nein.map(x => karte(x, "nein")).join("") || `<p class="klein">–</p>`}
+    ${Object.entries(oberOrdner(plan)).map(([k, name]) =>
+      `<div class="ordner">${esc(name)} (${plan[k].length})</div>${plan[k].map(x => karte(x, k)).join("") || `<p class="klein">–</p>`}`).join("")}
   </main>`;
 }
 
@@ -1428,8 +1445,9 @@ function wahl(feld, wert, optionen) {
   return `<div class="wahl">${Object.entries(optionen).map(([k, t]) =>
     `<button class="${wert === k ? "an" : ""}" data-akt="setze" data-feld="${feld}" data-wert="${k}">${esc(t)}</button>`).join("")}</div>`;
 }
-function janein(feld, wert) {
+function janein(feld, wert, mitVielleicht) {
   return `<div class="janein"><button class="ja ${wert === "ja" ? "an" : ""}" data-akt="setze" data-feld="${feld}" data-wert="ja">Ja</button>
+    ${mitVielleicht ? `<button class="vielleicht ${wert === "vielleicht" ? "an" : ""}" data-akt="setze" data-feld="${feld}" data-wert="vielleicht">Vielleicht</button>` : ""}
     <button class="nein ${wert === "nein" ? "an" : ""}" data-akt="setze" data-feld="${feld}" data-wert="nein">Nein</button></div>`;
 }
 function galerie(kid, art) {
@@ -1487,7 +1505,7 @@ function ansichtKunde() {
       <input class="text" id="umfeld" type="text" placeholder="z. B. Grundschule gegenüber, Friseur nebenan" value="${esc(r.umfeld || "")}"></div>`;
   } else if (s === 3) {
     inhalt = `<div class="schritt"><h3>4. Kommt der Standort in Frage?</h3>
-      <div class="hinweis">Auch „Nein“ ankreuzen – dann ist klar, dass er geprüft wurde.</div>${janein("inFrage", r.inFrage)}</div>`;
+      <div class="hinweis">Auch „Vielleicht“ oder „Nein“ ankreuzen – dann ist klar, dass er geprüft wurde.</div>${janein("inFrage", r.inFrage, true)}</div>`;
   } else if (s === 4) {
     inhalt = `<div class="schritt"><h3>5. Notiz</h3>
       <div class="hinweis">Wie ist der Automat angebracht, was ist im Weg (Fenster, Fallrohr, Hausecke …)? Freiwillig.</div>
