@@ -132,6 +132,9 @@
 "use strict";
 /* ================= Speicher (nur auf diesem Geraet) ================= */
 const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
+// Tourenplan-Karte aus der Kundenliste (eigener Schluessel: gross, und darf das Laden der Liste nie verhindern)
+const K_KARTE = "bes.karte";
+const karteHolen = () => lesen(K_KARTE, null);
 const lesen = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const schreiben = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 let kunden = lesen(K_KUNDEN, []);
@@ -266,6 +269,8 @@ document.getElementById("datei").addEventListener("change", ev => {
       info.autor = d.autor || "";       // Name fuer Druck-Wasserzeichen und Foto-Daten
       info.vorlagen = d.vorlagen || {}; // Anbau-Vorlagen je SC-Typ (Bild + Lage), sonst Platzhalter
       schreiben(K_INFO, info);
+      try { if (d.karte && d.karte.bild) schreiben(K_KARTE, d.karte); else localStorage.removeItem(K_KARTE); }
+      catch (err) { alert("Die Tourenplan-Karte ist zu groß für den Speicher – das PDF entsteht ohne Karte."); }
       zeige(liste.length + " Standorte geladen.");
       ui.ansicht = "liste"; zeichnen();
     } catch (err) { alert("Diese Datei ist keine passende Kundenliste."); }
@@ -822,25 +827,25 @@ function kuerzen(t, maxW, gr, fett) {
 const zahl = n => String(Math.round(n * 100) / 100);
 class PdfDok {
   constructor(titel, autor) { this.seiten = []; this.bilder = []; this.titel = titel; this.autor = autor; this.y = 0; }
-  seite() { this.s = { ops: [], bilder: [] }; this.seiten.push(this.s); this.y = 0; }
+  seite(w = PDF_W, h = PDF_H) { this.s = { ops: [], bilder: [], w, h }; this.seiten.push(this.s); this.y = 0; }   // quer: seite(PDF_H, PDF_W)
   farbe(hex, strich) { const n = parseInt(hex.slice(1), 16);
     this.s.ops.push(`${zahl((n >> 16 & 255) / 255)} ${zahl((n >> 8 & 255) / 255)} ${zahl((n & 255) / 255)} ${strich ? "RG" : "rg"}`); }
-  rechteck(x, y, w, h, hex) { this.farbe(hex); this.s.ops.push(`${zahl(x)} ${zahl(PDF_H - y - h)} ${zahl(w)} ${zahl(h)} re f`); }
-  linie(x1, y1, x2, y2, hex) { this.farbe(hex, true); this.s.ops.push(`0.6 w ${zahl(x1)} ${zahl(PDF_H - y1)} m ${zahl(x2)} ${zahl(PDF_H - y2)} l S`); }
+  rechteck(x, y, w, h, hex) { this.farbe(hex); this.s.ops.push(`${zahl(x)} ${zahl(this.s.h - y - h)} ${zahl(w)} ${zahl(h)} re f`); }
+  linie(x1, y1, x2, y2, hex) { this.farbe(hex, true); this.s.ops.push(`0.6 w ${zahl(x1)} ${zahl(this.s.h - y1)} m ${zahl(x2)} ${zahl(this.s.h - y2)} l S`); }
   text(t, x, y, gr, o = {}) {   // y = Oberkante der Zeile
     this.farbe(o.farbe || "#111827");
     const xx = o.rechts ? x - textBreite(t, gr, o.fett) : x;
-    this.s.ops.push(`BT /${o.fett ? "F2" : "F1"} ${gr} Tf ${zahl(xx)} ${zahl(PDF_H - y - gr * 0.82)} Td ${pdfStr(t)} Tj ET`);
+    this.s.ops.push(`BT /${o.fett ? "F2" : "F1"} ${gr} Tf ${zahl(xx)} ${zahl(this.s.h - y - gr * 0.82)} Td ${pdfStr(t)} Tj ET`);
   }
   absatz(t, x, y, maxW, gr, o = {}) { const z = umbrechen(t, maxW, gr, o.fett); z.forEach((l, i) => this.text(l, x, y + i * gr * 1.32, gr, o)); return z.length * gr * 1.32; }
   bildNeu(b) { this.bilder.push(b); return this.bilder.length - 1; }
   bild(i, x, y, w, h) { if (!this.s.bilder.includes(i)) this.s.bilder.push(i);
-    this.s.ops.push(`q ${zahl(w)} 0 0 ${zahl(h)} ${zahl(x)} ${zahl(PDF_H - y - h)} cm /Im${i} Do Q`); }
+    this.s.ops.push(`q ${zahl(w)} 0 0 ${zahl(h)} ${zahl(x)} ${zahl(this.s.h - y - h)} cm /Im${i} Do Q`); }
   wasserzeichen(t) {   // Ebene oc1: nur beim Drucken
     if (!t) return;
     const c = Math.cos(Math.PI / 6), s = Math.sin(Math.PI / 6), ops = ["/OC /oc1 BDC q /GS1 gs 0.06 0.16 0.29 rg"];
-    for (let r = 0, yy = -120; yy < PDF_H + 160; r++, yy += 72)
-      for (let xx = -260 + (r % 2) * 95; xx < PDF_W + 60; xx += 190)
+    for (let r = 0, yy = -120; yy < this.s.h + 160; r++, yy += 72)
+      for (let xx = -260 + (r % 2) * 95; xx < this.s.w + 60; xx += 190)
         ops.push(`BT /F2 22 Tf ${zahl(c)} ${zahl(s)} ${zahl(-s)} ${zahl(c)} ${zahl(xx)} ${zahl(yy)} Tm ${pdfStr(t)} Tj ET`);
     ops.push("Q EMC"); this.s.ops.push(...ops);
   }
@@ -861,7 +866,7 @@ class PdfDok {
     obj(6, `<< /Title ${pdfStr(this.titel)} /Author ${pdfStr(this.autor)} /Creator (Besichtigung) >>`);
     this.bilder.forEach((b, i) => obj(bildNr(i), `<< /Type /XObject /Subtype /Image /Width ${b.w} /Height ${b.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${b.bytes.length} >>`, b.bytes));
     this.seiten.forEach((s, j) => {
-      obj(seiteNr(j), `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PDF_W} ${PDF_H}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> ` +
+      obj(seiteNr(j), `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${s.w} ${s.h}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> ` +
         `/XObject << ${s.bilder.map(i => `/Im${i} ${bildNr(i)} 0 R`).join(" ")} >> /ExtGState << /GS1 << /Type /ExtGState /ca 0.16 /CA 0.16 >> >> ` +
         `/Properties << /oc1 3 0 R >> >> /Contents ${inhaltNr(j)} 0 R >>`);
       const inhalt = enc(s.ops.join("\n"));
@@ -885,9 +890,10 @@ async function pdfBild(blob, max) {
 async function pdfErstellen(plan, stempel, fortschritt) {
   const doc = new PdfDok(info.titel || "Besichtigung", info.autor || "");
   const B = PDF_W - 2 * RAND, UNTEN = PDF_H - 46;
-  const neu = () => {   // jede Seite: Kopfzeile mit dem Namen
-    doc.seite(); doc.rechteck(0, 0, PDF_W, 26, "#0b2038");
-    doc.text(kuerzen([info.vermerk, info.titel].filter(Boolean).join(" · "), B, 9, true), RAND, 8.5, 9, { fett: true, farbe: "#ffffff" });
+  const neu = quer => {   // jede Seite: Kopfzeile mit dem Namen (quer: Karte)
+    if (quer) doc.seite(PDF_H, PDF_W); else doc.seite();
+    doc.rechteck(0, 0, doc.s.w, 26, "#0b2038");
+    doc.text(kuerzen([info.vermerk, info.titel].filter(Boolean).join(" · "), doc.s.w - 2 * RAND, 9, true), RAND, 8.5, 9, { fett: true, farbe: "#ffffff" });
     doc.y = 46;
   };
   const alle = [...plan.ja, ...plan.nein];
@@ -927,6 +933,16 @@ async function pdfErstellen(plan, stempel, fortschritt) {
     if (doc.y > UNTEN - 50) neu();
     doc.text(`Noch nicht besichtigt (${plan.offen.length})`, RAND, doc.y, 11, { fett: true, farbe: "#374151" }); doc.y += 16;
     doc.y += doc.absatz(plan.offen.map(x => `${x.k.nr} ${x.k.name} (${x.k.ort})`).join(" · "), RAND, doc.y, B, 8, { farbe: "#6b7280" });
+  }
+  // ---- Tourenplan-Karte, quer (Mirko 04.11.2026: "dass sie sehen, wie ich geplant habe") ----
+  const karte = karteHolen();
+  if (karte && karte.bild) {
+    try {
+      const b = await pdfBild(await (await fetch(karte.bild)).blob(), 2000);
+      neu(true);
+      const f = Math.min((doc.s.w - 2 * RAND) / b.w, (doc.s.h - 86) / b.h), w = b.w * f, h = b.h * f;
+      doc.bild(doc.bildNeu(b), (doc.s.w - w) / 2, 38, w, h);
+    } catch (err) { /* ohne Karte weiter - das Dokument darf daran nicht scheitern */ }
   }
   // ---- je Kunde eine Seite ----
   let fertigeBilder = 0; const alleBilder = alle.reduce((s, e) => s + e.medien.length, 0);
@@ -975,8 +991,8 @@ async function pdfErstellen(plan, stempel, fortschritt) {
   // ---- Fuss + Druck-Wasserzeichen auf jeder Seite ----
   doc.seiten.forEach((s, j) => {
     doc.s = s;
-    doc.text(info.vermerk || "", RAND, PDF_H - 28, 8, { farbe: "#6b7280" });
-    doc.text(`Seite ${j + 1} von ${doc.seiten.length}`, PDF_W - RAND, PDF_H - 28, 8, { rechts: true, farbe: "#6b7280" });
+    doc.text(info.vermerk || "", RAND, s.h - 28, 8, { farbe: "#6b7280" });
+    doc.text(`Seite ${j + 1} von ${doc.seiten.length}`, s.w - RAND, s.h - 28, 8, { rechts: true, farbe: "#6b7280" });
     doc.wasserzeichen(info.autor);
   });
   return doc.blob();
@@ -993,7 +1009,9 @@ async function teilen(datei) {
 }
 function heute() { const d = new Date(), z = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`; }
 const pdfName = () => `${sauber(info.titel || "Besichtigung")} ${heute()}.pdf`;
-const FOTO_ORDNER = "2 Fotos in voller Größe";
+// Reihenfolge in der ZIP: 1 PDF, 2 Tourenplan-Karte (wenn in der Kundenliste), dann die Fotos
+const KARTE_DATEI = "2 Tourenplan-Karte.jpg";
+const fotoOrdner = () => (karteHolen() ? "3" : "2") + " Fotos in voller Größe";
 // Nur das End-Dokument (PDF) - eine Datei, gut fuer die Mail
 async function uebersichtTeilen() {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
@@ -1021,8 +1039,15 @@ async function zipErstellen() {
     // Mirko 04.11.2026: Julian und Uwe sollen beim Oeffnen ZUERST die Standortpruefung sehen ->
     // "1 ..." vor "2 Fotos ..." (nach Namen sortiert steht das PDF so oben; Windows zeigt Ordner immer zuerst)
     eintraege.push({ name: "1 " + pdfName(), blob: pdf });
+    const karte = karteHolen();
+    if (karte && karte.bild) {   // Karte zum Vergroessern, mit Namensbalken wie die Fotos
+      const roh = await (await fetch(karte.bild)).blob();
+      const bild = await stempeln(roh, [info.vermerk || "", "Tourenplan-Karte · Planung der Standortbesichtigung"]);
+      eintraege.push({ name: KARTE_DATEI, blob: await mitExif(bild, [[0x010E, info.vermerk], [0x013B, info.autor],
+        [0x8298, info.autor ? `(c) ${info.autor} - ${info.titel || ""}` : ""]]) });
+    }
     for (const gruppe of ["ja", "nein"]) for (const x of plan[gruppe]) {
-      const basis = `${FOTO_ORDNER}/${OBER[gruppe]}/${ordnerName(x.k)}/`;
+      const basis = `${fotoOrdner()}/${OBER[gruppe]}/${ordnerName(x.k)}/`;
       const namen = dateiNamen(x.medien);
       x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: stempel.get(m.id) || m.blob }));   // beschriftete Fassung
     }
@@ -1201,8 +1226,9 @@ async function zipEinlesen(datei) {
         }
         continue;
       }
+      if (dname === KARTE_DATEI) continue;   // Tourenplan-Karte gehoert zu keinem Kunden
       const k = teile.length >= 2 ? nachOrdner[teile[teile.length - 2]] : null;
-      if (!k) { if (/\.(jpe?g|png)$/i.test(dname)) fremd++; continue; }
+      if (!k) { if (teile.length >= 3 && /\.(jpe?g|png)$/i.test(dname)) fremd++; continue; }
       const f = fund(k);
       if (teile.includes(OBER.ja)) f.gruppe = "ja"; else if (teile.includes(OBER.nein)) f.gruppe = "nein";
       if (dname === "Steckbrief.html") {
@@ -1359,8 +1385,8 @@ function ansichtZip() {
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
   const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
-    <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}<div class="klein" style="margin-top:4px"><b>„${esc(VOR_ORT)}“</b></div>${info.vermerk ? `<div class="klein" style="margin-top:4px">🔒 „${esc(info.vermerk)}“ steht oben auf jeder Seite und eingebrannt in jedem Foto.</div>` : ""}</div>
-      <div class="klein" style="margin-top:6px">In der ZIP steht das PDF zuerst („1 ${esc(pdfName())}“), darunter der Ordner „${FOTO_ORDNER}“. ${standorte(plan.ja.length + plan.nein.length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
+    <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte${karteHolen() ? ", dann die <b>Tourenplan-Karte</b>" : ""}, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}<div class="klein" style="margin-top:4px"><b>„${esc(VOR_ORT)}“</b></div>${info.vermerk ? `<div class="klein" style="margin-top:4px">🔒 „${esc(info.vermerk)}“ steht oben auf jeder Seite und eingebrannt in jedem Foto.</div>` : ""}</div>
+      <div class="klein" style="margin-top:6px">In der ZIP steht das PDF zuerst („1 ${esc(pdfName())}“)${karteHolen() ? `, dann „${KARTE_DATEI}“` : ""}, darunter der Ordner „${fotoOrdner()}“. ${standorte(plan.ja.length + plan.nein.length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
     <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
     <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur PDF teilen (eine Datei, z. B. für die Mail)</button>
     <div class="ordner">${OBER.ja} (${plan.ja.length})</div>${plan.ja.map(x => karte(x, "ja")).join("") || `<p class="klein">–</p>`}
