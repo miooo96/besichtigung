@@ -134,6 +134,22 @@
 const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
 // Tourenplan-Karte aus der Kundenliste (eigener Schluessel: gross, und darf das Laden der Liste nie verhindern)
 const K_KARTE = "bes.karte";
+// Fassung des Programms - gleiche Nummer wie CACHE in sw.js; steht unter "Mehr"
+const FASSUNG = "24";
+/* Mirko 04.11.2026: "koennen wir nicht einen Knopf aktualisieren einbauen, der neu laedt - bei mir klappt es
+   mit neu laden in der App nicht". Loescht NUR den Programm-Zwischenspeicher (Cache Storage) - Angaben
+   (localStorage) und Fotos (IndexedDB) bleiben unberuehrt - und holt die Seite frisch vom Server. */
+async function aktualisieren() {
+  if (navigator.onLine === false) { alert("Kein Netz – bitte mit Empfang noch einmal versuchen."); return; }
+  zeige("Neueste Fassung wird geladen …", 20000);
+  try {
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+    if (reg) await reg.update().catch(() => {});
+    if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
+    await Promise.all(["./", "index.html", "sw.js"].map(u => fetch(u, { cache: "reload" }).catch(() => {})));
+  } catch (err) { /* trotzdem neu laden */ }
+  location.reload();
+}
 const karteHolen = () => lesen(K_KARTE, null);
 const lesen = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const schreiben = (k, v) => localStorage.setItem(k, JSON.stringify(v));
@@ -263,7 +279,7 @@ document.getElementById("datei").addEventListener("change", ev => {
       const liste = Array.isArray(d) ? d : d.kunden;
       if (!Array.isArray(liste) || !liste.length || !liste.every(k => k.id && k.name)) throw new Error("Format");
       kunden = liste; schreiben(K_KUNDEN, kunden);
-      info.importiert = jetzt(); info.quelle = f.name;
+      info.importiert = jetzt(); info.quelle = f.name; info.stand = d.stand || "";
       info.titel = d.titel || "Standort-Besichtigung"; info.auswahl = d.auswahl || "";
       info.vermerk = d.vermerk || "";   // z. B. wer es ausgearbeitet hat - steht in der Datei, nicht im Programm
       info.autor = d.autor || "";       // Name fuer die PDF-Eigenschaften und Foto-Daten
@@ -1330,6 +1346,9 @@ function ansichtListe() {
 function ansichtMehr() {
   return `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="liste">‹ Liste</button></div><h1>Mehr</h1></div>
   <main>
+    <div class="karte"><b>Werkzeug aktualisieren</b><p class="klein">Holt die neueste Fassung aus dem Netz. Ihre Angaben, Fotos und die Kundenliste bleiben.</p>
+      <p class="klein" id="stand">Diese Fassung: <b>${FASSUNG}</b> · Kundenliste vom ${esc(info.stand || "–")} · Tourenplan-Karte: ${karteHolen() ? "✓ geladen" : "– nicht in der Liste"}</p>
+      <button class="knopf2" data-akt="aktualisieren">🔄 Jetzt aktualisieren</button></div>
     <div class="karte"><b>ZIP für den Chef</b><p class="klein">Vorschau ansehen und als ZIP auf dem iPhone sichern („In Dateien sichern“) oder weitergeben. Abends einmal sichern – das ist zugleich Ihre Sicherung der Fotos.</p>
       <button class="gross start" data-akt="zip">ZIP-Vorschau</button></div>
     <div class="karte"><b>Aus ZIP wiederherstellen</b><p class="klein">Holt Angaben und Fotos aus einer ZIP zurück, die mit diesem Werkzeug erstellt wurde – z. B. nachdem die App gelöscht wurde oder auf einem neuen Handy. Vorher die Kundenliste laden. Was im Werkzeug schon steht, wird nicht überschrieben.</p>
@@ -1514,6 +1533,7 @@ document.addEventListener("click", async ev => {
   if (akt === "laden") return document.getElementById("datei").click();
   if (akt === "senden") return senden();
   if (akt === "zipeinlesen") return document.getElementById("wahlZip").click();
+  if (akt === "aktualisieren") return aktualisieren();
   if (akt === "zipbauen") return zipErstellen();
   if (akt === "uebersicht") return uebersichtTeilen();
   if (akt === "sammeln") return document.getElementById("wahlSammel").click();
