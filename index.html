@@ -989,6 +989,7 @@ async function teilen(datei) {
 }
 function heute() { const d = new Date(), z = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`; }
 const pdfName = () => `${sauber(info.titel || "Besichtigung")} ${heute()}.pdf`;
+const FOTO_ORDNER = "2 Fotos in voller Größe";
 // Nur das End-Dokument (PDF) - eine Datei, gut fuer die Mail
 async function uebersichtTeilen() {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
@@ -1013,9 +1014,11 @@ async function zipErstellen() {
     const eintraege = [];
     const stempel = await stempelAlle(plan, (n, g) => zeige(`Fotos werden beschriftet … ${n} / ${g}`, 20000));
     const pdf = await pdfErstellen(plan, stempel, (n, g) => zeige(`PDF wird erstellt … Foto ${n} / ${g}`, 20000));
-    eintraege.push({ name: pdfName(), blob: pdf });
+    // Mirko 04.11.2026: Julian und Uwe sollen beim Oeffnen ZUERST die Standortpruefung sehen ->
+    // "1 ..." vor "2 Fotos ..." (nach Namen sortiert steht das PDF so oben; Windows zeigt Ordner immer zuerst)
+    eintraege.push({ name: "1 " + pdfName(), blob: pdf });
     for (const gruppe of ["ja", "nein"]) for (const x of plan[gruppe]) {
-      const basis = `Fotos in voller Größe/${OBER[gruppe]}/${ordnerName(x.k)}/`;
+      const basis = `${FOTO_ORDNER}/${OBER[gruppe]}/${ordnerName(x.k)}/`;
       const namen = dateiNamen(x.medien);
       x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: stempel.get(m.id) || m.blob }));   // beschriftete Fassung
     }
@@ -1353,7 +1356,7 @@ function ansichtZip() {
   const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
     <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}${info.vermerk ? `<div class="klein" style="margin-top:4px">🔒 „${esc(info.vermerk)}“ steht oben auf jeder Seite und eingebrannt in jedem Foto.</div>` : ""}</div>
-      <div class="klein" style="margin-top:6px">In der ZIP zusätzlich: Ordner „Fotos in voller Größe“. ${standorte(plan.ja.length + plan.nein.length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
+      <div class="klein" style="margin-top:6px">In der ZIP steht das PDF zuerst („1 ${esc(pdfName())}“), darunter der Ordner „${FOTO_ORDNER}“. ${standorte(plan.ja.length + plan.nein.length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
     <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
     <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur PDF teilen (eine Datei, z. B. für die Mail)</button>
     <div class="ordner">${OBER.ja} (${plan.ja.length})</div>${plan.ja.map(x => karte(x, "ja")).join("") || `<p class="klein">–</p>`}
