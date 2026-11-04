@@ -3,7 +3,7 @@
    eine alte Fassung, solange Empfang besteht (Lehre vom 05.09.2026), und im
    Funkloch laeuft die Seite trotzdem. Es werden nur die Programmdateien
    gespeichert - die Kundenliste liegt im Geraetespeicher der Seite. */
-const CACHE = "besichtigung-v22";  // v22 04.11.2026: kein Druck-Wasserzeichen mehr
+const CACHE = "besichtigung-v23";  // v23 04.11.2026: Urheberzeile dezent (Kopfzeile, kleiner Foto-Balken)
 const DATEIEN = ["./", "index.html", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", ev => {

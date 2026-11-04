@@ -657,17 +657,20 @@ async function stempeln(blob, zeilen) {
   if (!zeilen.length) return blob;
   try {
     const b = await createImageBitmap(blob, { imageOrientation: "from-image" });
-    const w = b.width; let fs = Math.max(22, Math.round(w * 0.034)); const pad = Math.round(fs * 0.55);
+    // Mirko 04.11.2026: "nicht so aufdringlich" - schmaler Balken, normale Schrift, Urheberzeile kleiner und heller.
+    // Balkenfarbe bleibt #0f2a4a: daran erkennt "Aus ZIP wiederherstellen" den Balken.
+    const w = b.width; let fs = Math.max(18, Math.round(w * 0.026)); const pad = Math.round(fs * 0.5);
     const c = document.createElement("canvas"), x = c.getContext("2d");
-    const schrift = (gr, fett) => `${fett ? "bold " : ""}${gr}px -apple-system, Helvetica, Arial, sans-serif`;
-    x.font = schrift(fs, true);   // Schrift so weit verkleinern, dass die laengste Zeile passt
-    while (fs > 14 && Math.max(...zeilen.map(t => x.measureText(t).width)) > w - 2 * pad) { fs -= 1; x.font = schrift(fs, true); }
+    const schrift = gr => `${gr}px -apple-system, Helvetica, Arial, sans-serif`;
+    x.font = schrift(fs);   // Schrift so weit verkleinern, dass die laengste Zeile passt
+    while (fs > 12 && Math.max(...zeilen.map(t => x.measureText(t).width)) > w - 2 * pad) { fs -= 1; x.font = schrift(fs); }
     const balken = pad * 2 + zeilen.length * fs + (zeilen.length - 1) * Math.round(fs * 0.35);
     c.width = w; c.height = b.height + balken;
     x.fillStyle = "#0f2a4a"; x.fillRect(0, 0, w, balken);
     x.drawImage(b, 0, balken);
-    x.fillStyle = "#ffffff"; x.textBaseline = "top";
-    zeilen.forEach((t, i) => { x.font = schrift(fs, i === 0); x.fillText(t, pad, pad + i * Math.round(fs * 1.35)); });
+    x.textBaseline = "top";
+    zeilen.forEach((t, i) => { x.font = schrift(i ? Math.round(fs * 0.85) : fs); x.fillStyle = i ? "#c7d2e0" : "#ffffff";
+      x.fillText(t, pad, pad + i * Math.round(fs * 1.35)); });
     return await new Promise(res => c.toBlob(r => res(r || blob), "image/jpeg", 0.88));
   } catch (err) { return blob; }
 }
@@ -702,7 +705,7 @@ async function stempelAlle(plan, fortschritt) {
   for (const x of alle) {
     const k = x.k, tage = besuchsTage(x.r).join(", ");
     for (const m of x.medien) {
-      const bild = await stempeln(m.blob, [info.vermerk || "", `${k.nr} · ${k.name} · ${k.ort}${tage ? " · " + tage : ""}`]);
+      const bild = await stempeln(m.blob, [`${k.nr} · ${k.name} · ${k.ort}${tage ? " · " + tage : ""}`, info.vermerk || ""]);
       fertig.set(m.id, await mitExif(bild, [[0x010E, info.vermerk], [0x013B, info.autor],
         [0x8298, info.autor ? `(c) ${info.autor} - ${info.titel || ""}` : ""]]));
       if (fortschritt) fortschritt(++n, gesamt);
@@ -881,8 +884,10 @@ async function pdfErstellen(plan, stempel, fortschritt) {
   const B = PDF_W - 2 * RAND, UNTEN = PDF_H - 46;
   const neu = quer => {   // jede Seite: Kopfzeile mit dem Namen (quer: Karte)
     if (quer) doc.seite(PDF_H, PDF_W); else doc.seite();
-    doc.rechteck(0, 0, doc.s.w, 26, "#0b2038");
-    doc.text(kuerzen([info.vermerk, info.titel].filter(Boolean).join(" · "), doc.s.w - 2 * RAND, 9, true), RAND, 8.5, 9, { fett: true, farbe: "#ffffff" });
+    // Mirko 04.11.2026: Name "nicht so aufdringlich" - schlichte Kopfzeile: Titel links, Urheber rechts, feine Linie
+    doc.text(kuerzen(info.titel || "", doc.s.w / 2 - RAND, 8.5), RAND, 12, 8.5, { farbe: "#6b7280" });
+    if (info.vermerk) doc.text(kuerzen(info.vermerk, doc.s.w / 2 - RAND, 8.5), doc.s.w - RAND, 12, 8.5, { rechts: true, farbe: "#6b7280" });
+    doc.linie(RAND, 26, doc.s.w - RAND, 26, "#d1d5db");
     doc.y = 46;
   };
   const alle = [...plan.ja, ...plan.nein];
@@ -977,10 +982,9 @@ async function pdfErstellen(plan, stempel, fortschritt) {
     await bilderZeigen(mass, "");
     await bilderZeigen(mont, MONTAGE_TEXT);
   }
-  // ---- Fusszeile mit Namen und Seitenzahl auf jeder Seite ----
+  // ---- Fusszeile: nur die Seitenzahl (der Name steht schon oben) ----
   doc.seiten.forEach((s, j) => {
     doc.s = s;
-    doc.text(info.vermerk || "", RAND, s.h - 28, 8, { farbe: "#6b7280" });
     doc.text(`Seite ${j + 1} von ${doc.seiten.length}`, s.w - RAND, s.h - 28, 8, { rechts: true, farbe: "#6b7280" });
   });
   return doc.blob();
@@ -1030,7 +1034,7 @@ async function zipErstellen() {
     const karte = karteHolen();
     if (karte && karte.bild) {   // Karte zum Vergroessern, mit Namensbalken wie die Fotos
       const roh = await (await fetch(karte.bild)).blob();
-      const bild = await stempeln(roh, [info.vermerk || "", "Tourenplan-Karte · Planung der Standortbesichtigung"]);
+      const bild = await stempeln(roh, ["Tourenplan-Karte · Planung der Standortbesichtigung", info.vermerk || ""]);
       eintraege.push({ name: KARTE_DATEI, blob: await mitExif(bild, [[0x010E, info.vermerk], [0x013B, info.autor],
         [0x8298, info.autor ? `(c) ${info.autor} - ${info.titel || ""}` : ""]]) });
     }
@@ -1373,7 +1377,7 @@ function ansichtZip() {
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
   const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
-    <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte${karteHolen() ? ", dann die <b>Tourenplan-Karte</b>" : ""}, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}<div class="klein" style="margin-top:4px"><b>„${esc(VOR_ORT)}“</b></div>${info.vermerk ? `<div class="klein" style="margin-top:4px">🔒 „${esc(info.vermerk)}“ steht oben auf jeder Seite und eingebrannt in jedem Foto.</div>` : ""}</div>
+    <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte${karteHolen() ? ", dann die <b>Tourenplan-Karte</b>" : ""}, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}<div class="klein" style="margin-top:4px"><b>„${esc(VOR_ORT)}“</b></div>${info.vermerk ? `<div class="klein" style="margin-top:4px">„${esc(info.vermerk)}“ steht dezent oben auf jeder Seite und klein unter dem Kundennamen auf jedem Foto.</div>` : ""}</div>
       <div class="klein" style="margin-top:6px">In der ZIP steht das PDF zuerst („1 ${esc(pdfName())}“)${karteHolen() ? `, dann „${KARTE_DATEI}“` : ""}, darunter der Ordner „${fotoOrdner()}“. ${standorte(plan.ja.length + plan.nein.length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
     <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
     <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur PDF teilen (eine Datei, z. B. für die Mail)</button>
