@@ -266,7 +266,7 @@ document.getElementById("datei").addEventListener("change", ev => {
       info.importiert = jetzt(); info.quelle = f.name;
       info.titel = d.titel || "Standort-Besichtigung"; info.auswahl = d.auswahl || "";
       info.vermerk = d.vermerk || "";   // z. B. wer es ausgearbeitet hat - steht in der Datei, nicht im Programm
-      info.autor = d.autor || "";       // Name fuer Druck-Wasserzeichen und Foto-Daten
+      info.autor = d.autor || "";       // Name fuer die PDF-Eigenschaften und Foto-Daten
       info.vorlagen = d.vorlagen || {}; // Anbau-Vorlagen je SC-Typ (Bild + Lage), sonst Platzhalter
       schreiben(K_INFO, info);
       try { if (d.karte && d.karte.bild) schreiben(K_KARTE, d.karte); else localStorage.removeItem(K_KARTE); }
@@ -790,9 +790,9 @@ ${plan.offen.length ? `<h2>Noch nicht besichtigt (${plan.offen.length})</h2><p c
    Mirko 04.11.2026: "die fertige ZIP soll jeden Kunden mit allen Infos und Fotos mitbringen" - in der ZIP
    blaetterte man Foto fuer Foto ohne Angaben. Jetzt EIN PDF: Uebersicht + je Kunde eine Seite mit allen
    Angaben und Fotos, in Fahrreihenfolge. Eigener kleiner PDF-Schreiber (keine fremde Bibliothek).
-   Druck-Wasserzeichen als PDF-Ebene "nur beim Drucken": am Bildschirm in jedem Programm unsichtbar,
-   Adobe Reader druckt sie mit, andere Programme lassen sie womoeglich weg. Kopfzeile mit dem Namen
-   steht immer auf jeder Seite. */
+   Kopfzeile und Fusszeile mit dem Namen stehen auf jeder Seite. Kein Druck-Wasserzeichen mehr
+   (Mirko 04.11.2026: "das mit den Wasserzeichen soll weg ... ueberall steht ja, dass es von mir
+   erarbeitet wurde"). */
 const PDF_W = 595.28, PDF_H = 841.89, RAND = 40;
 const WINANSI = { "€": 128, "‚": 130, "„": 132, "…": 133, "‘": 145, "’": 146, "“": 147, "”": 148, "•": 149, "–": 150, "—": 151 };
 function pdfStr(s) {
@@ -841,41 +841,30 @@ class PdfDok {
   bildNeu(b) { this.bilder.push(b); return this.bilder.length - 1; }
   bild(i, x, y, w, h) { if (!this.s.bilder.includes(i)) this.s.bilder.push(i);
     this.s.ops.push(`q ${zahl(w)} 0 0 ${zahl(h)} ${zahl(x)} ${zahl(this.s.h - y - h)} cm /Im${i} Do Q`); }
-  wasserzeichen(t) {   // Ebene oc1: nur beim Drucken
-    if (!t) return;
-    const c = Math.cos(Math.PI / 6), s = Math.sin(Math.PI / 6), ops = ["/OC /oc1 BDC q /GS1 gs 0.06 0.16 0.29 rg"];
-    for (let r = 0, yy = -120; yy < this.s.h + 160; r++, yy += 72)
-      for (let xx = -260 + (r % 2) * 95; xx < this.s.w + 60; xx += 190)
-        ops.push(`BT /F2 22 Tf ${zahl(c)} ${zahl(s)} ${zahl(-s)} ${zahl(c)} ${zahl(xx)} ${zahl(yy)} Tm ${pdfStr(t)} Tj ET`);
-    ops.push("Q EMC"); this.s.ops.push(...ops);
-  }
   blob() {
     const teile = [], offs = []; let pos = 0;
     const enc = s => { const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255; return u; };
     const add = d => { const u = typeof d === "string" ? enc(d) : d; teile.push(u); pos += u.length; };
     const obj = (n, kopf, strom) => { offs[n] = pos; add(`${n} 0 obj\n${kopf}\n`); if (strom) { add("stream\n"); add(strom); add("\nendstream\n"); } add("endobj\n"); };
-    const nb = this.bilder.length, bildNr = i => 7 + i, seiteNr = j => 7 + nb + 2 * j, inhaltNr = j => 8 + nb + 2 * j;
-    const gesamt = 6 + nb + 2 * this.seiten.length;
-    add("%PDF-1.5\n%\xE2\xE3\xCF\xD3\n");
-    obj(1, "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [3 0 R] /D << /Order [3 0 R] /OFF [3 0 R] /AS [" +
-      "<< /Event /Print /OCGs [3 0 R] /Category [/Print] >> << /Event /View /OCGs [3 0 R] /Category [/View] >>] >> >> >>");
+    const nb = this.bilder.length, bildNr = i => 6 + i, seiteNr = j => 6 + nb + 2 * j, inhaltNr = j => 7 + nb + 2 * j;
+    const gesamt = 5 + nb + 2 * this.seiten.length;
+    add("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+    obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
     obj(2, `<< /Type /Pages /Kids [${this.seiten.map((_, j) => seiteNr(j) + " 0 R").join(" ")}] /Count ${this.seiten.length} >>`);
-    obj(3, "<< /Type /OCG /Name (Druck-Wasserzeichen) /Usage << /Print << /PrintState /ON >> /View << /ViewState /OFF >> >> >>");
-    obj(4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
-    obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
-    obj(6, `<< /Title ${pdfStr(this.titel)} /Author ${pdfStr(this.autor)} /Creator (Besichtigung) >>`);
+    obj(3, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+    obj(4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+    obj(5, `<< /Title ${pdfStr(this.titel)} /Author ${pdfStr(this.autor)} /Creator (Besichtigung) >>`);
     this.bilder.forEach((b, i) => obj(bildNr(i), `<< /Type /XObject /Subtype /Image /Width ${b.w} /Height ${b.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${b.bytes.length} >>`, b.bytes));
     this.seiten.forEach((s, j) => {
-      obj(seiteNr(j), `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${s.w} ${s.h}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> ` +
-        `/XObject << ${s.bilder.map(i => `/Im${i} ${bildNr(i)} 0 R`).join(" ")} >> /ExtGState << /GS1 << /Type /ExtGState /ca 0.16 /CA 0.16 >> >> ` +
-        `/Properties << /oc1 3 0 R >> >> /Contents ${inhaltNr(j)} 0 R >>`);
+      obj(seiteNr(j), `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${s.w} ${s.h}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> ` +
+        `/XObject << ${s.bilder.map(i => `/Im${i} ${bildNr(i)} 0 R`).join(" ")} >> >> /Contents ${inhaltNr(j)} 0 R >>`);
       const inhalt = enc(s.ops.join("\n"));
       obj(inhaltNr(j), `<< /Length ${inhalt.length} >>`, inhalt);
     });
     const xref = pos;
     let x = `xref\n0 ${gesamt + 1}\n0000000000 65535 f \n`;
     for (let n = 1; n <= gesamt; n++) x += String(offs[n]).padStart(10, "0") + " 00000 n \n";
-    add(x + `trailer\n<< /Size ${gesamt + 1} /Root 1 0 R /Info 6 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+    add(x + `trailer\n<< /Size ${gesamt + 1} /Root 1 0 R /Info 5 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
     return new Blob(teile, { type: "application/pdf" });
   }
 }
@@ -988,12 +977,11 @@ async function pdfErstellen(plan, stempel, fortschritt) {
     await bilderZeigen(mass, "");
     await bilderZeigen(mont, MONTAGE_TEXT);
   }
-  // ---- Fuss + Druck-Wasserzeichen auf jeder Seite ----
+  // ---- Fusszeile mit Namen und Seitenzahl auf jeder Seite ----
   doc.seiten.forEach((s, j) => {
     doc.s = s;
     doc.text(info.vermerk || "", RAND, s.h - 28, 8, { farbe: "#6b7280" });
     doc.text(`Seite ${j + 1} von ${doc.seiten.length}`, s.w - RAND, s.h - 28, 8, { rechts: true, farbe: "#6b7280" });
-    doc.wasserzeichen(info.autor);
   });
   return doc.blob();
 }
