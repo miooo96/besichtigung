@@ -125,6 +125,8 @@
 <!-- Sammel-Zuordnung: alle Massband-Fotos des Tages auf einmal -->
 <input type="file" id="wahlSammel" accept="image/*" multiple>
 <input type="file" id="wahlVideo" accept="video/*" multiple>
+<!-- Sicherung: eine mit dem Werkzeug erstellte ZIP wieder einlesen -->
+<input type="file" id="wahlZip" accept=".zip,application/zip,application/x-zip-compressed">
 
 <script>
 "use strict";
@@ -355,7 +357,8 @@ async function fingerabdruck(file) { const t = await aufnahmeZeit(file); return 
 function besuchsFenster() {
   const f = [];
   for (const k of kunden) for (const b of ((erg[k.id] || {}).besuche || []))
-    f.push({ kid: k.id, start: new Date(b.start), ende: b.ende ? new Date(b.ende) : new Date() });
+    if (!b.wieder) f.push(   // aus einer ZIP zurueckgeholte Besuche kennen nur den Tag, keine Uhrzeit
+{ kid: k.id, start: new Date(b.start), ende: b.ende ? new Date(b.ende) : new Date() });
   return f;
 }
 function zuordnungVorschlag(zeit, fenster) {
@@ -1064,6 +1067,182 @@ async function senden() {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
+/* ================= ZIP wieder einlesen =================
+   Mirko 04.11.2026: App geloescht - "wie lade ich die zip rein, dass ich die Kunden wieder habe".
+   Liest eine ZIP, die dieses Werkzeug erstellt hat: Angaben aus dem PDF (ab 04.11.) bzw. aus den
+   Steckbriefen (Fassung vom 03.11.), Fotos aus den Kundenordnern. Der eingebrannte Namensbalken wird
+   wieder abgeschnitten, sonst stuende er beim naechsten ZIP doppelt. Vorhandenes wird nie ueberschrieben. */
+async function zipLesen(datei) {
+  const teil = async (a, b) => new Uint8Array(await datei.slice(a, b).arrayBuffer());
+  const schwanz = await teil(Math.max(0, datei.size - 65557), datei.size);
+  let p = -1;
+  for (let i = schwanz.length - 22; i >= 0; i--)
+    if (schwanz[i] === 0x50 && schwanz[i + 1] === 0x4B && schwanz[i + 2] === 5 && schwanz[i + 3] === 6) { p = i; break; }
+  if (p < 0) throw new Error("Das ist keine ZIP-Datei.");
+  const ende = new DataView(schwanz.buffer, p);
+  const anzahl = ende.getUint16(10, true), cdGr = ende.getUint32(12, true), cdPos = ende.getUint32(16, true);
+  const cd = await teil(cdPos, cdPos + cdGr), dv = new DataView(cd.buffer), dec = new TextDecoder();
+  const liste = [];
+  for (let i = 0, q = 0; i < anzahl && q + 46 <= cd.length && dv.getUint32(q, true) === 0x02014B50; i++) {
+    const nl = dv.getUint16(q + 28, true);
+    liste.push({ name: dec.decode(cd.subarray(q + 46, q + 46 + nl)).normalize("NFC"), packart: dv.getUint16(q + 10, true),
+      gr: dv.getUint32(q + 20, true), lh: dv.getUint32(q + 42, true) });
+    q += 46 + nl + dv.getUint16(q + 30, true) + dv.getUint16(q + 32, true);
+  }
+  // Inhalt erst bei Bedarf lesen - eine grosse ZIP kommt so nie ganz in den Speicher
+  for (const e of liste) e.inhalt = async () => {
+    const k = new DataView((await teil(e.lh, e.lh + 30)).buffer);
+    const start = e.lh + 30 + k.getUint16(26, true) + k.getUint16(28, true), roh = datei.slice(start, start + e.gr);
+    if (e.packart === 0) return roh;
+    if (e.packart === 8 && typeof DecompressionStream !== "undefined")
+      return await new Response(roh.stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob();
+    throw new Error("Diese ZIP ist gepackt, wie es das Handy nicht lesen kann.");
+  };
+  return liste.filter(e => !e.name.endsWith("/") && !/(^|\/)(__MACOSX|\._)/.test(e.name));
+}
+// PDF (selbst erzeugt, Inhalt ungepackt): je Seite die Textzeilen mit Schrift, Groesse und Lage
+function pdfTexte(roh) {
+  const seiten = [], strom = /<< \/Length (\d+) >>\nstream\n/g; let m;
+  while ((m = strom.exec(roh))) {
+    const s = roh.substr(m.index + m[0].length, +m[1]), ops = [];
+    const t = /BT \/(F[12]) ([\d.]+) Tf ([-\d.]+) ([-\d.]+) Td \(((?:\\[\s\S]|[^\\)])*)\) Tj ET/g; let o;
+    while ((o = t.exec(s))) ops.push({ fett: o[1] === "F2", gr: +o[2], x: +o[3], t: o[5].replace(/\\([\s\S])/g, "$1") });
+    seiten.push(ops);
+  }
+  return seiten;
+}
+const FELDER = ["Adresse", "Telefon", "Automat", "Typ / Anbau", "Rechts frei", "Lage", "Umfeld", "Kommt in Frage", "Notiz", "Besichtigt"];
+function angabenAusPdf(roh) {   // -> [{nr, name, inFrage, felder: {Bezeichnung: Wert}}]
+  const aus = [];
+  for (const ops of pdfTexte(roh)) {
+    let akt = null, feld = null;
+    for (const o of ops) {
+      if (o.fett && o.gr === 18 && o.x === RAND && o.t.includes(" · ")) {   // Kundenseite: "W1 · Name"
+        const i = o.t.indexOf(" · "); akt = { nr: o.t.slice(0, i), name: o.t.slice(i + 3), felder: {} }; aus.push(akt); feld = null;
+      } else if (!akt) continue;
+      else if (o.fett && o.gr === 11 && /^kommt (nicht )?in Frage$/.test(o.t)) akt.inFrage = o.t.includes("nicht") ? "nein" : "ja";
+      else if (!o.fett && o.gr === 9 && o.x === RAND && FELDER.includes(o.t)) { feld = o.t; akt.felder[feld] = ""; }
+      else if (feld && o.gr === 10 && o.x === RAND + 92) akt.felder[feld] += (akt.felder[feld] ? " " : "") + o.t;   // umbrochene Zeilen
+      else feld = null;
+    }
+  }
+  return aus;
+}
+function angabenAusSteckbrief(html) {
+  const d = new DOMParser().parseFromString(html, "text/html"), felder = {}, merkmale = [];
+  d.querySelectorAll("table.daten tr").forEach(tr => {
+    const th = tr.querySelector("th"), td = tr.querySelector("td"); if (!th || !td) return;
+    const f = th.textContent.trim();
+    if (f === "Umfeld") td.querySelectorAll(".tag").forEach(s => { merkmale.push(s.textContent.trim()); s.remove(); });
+    felder[f] = td.textContent.trim();
+  });
+  return { felder, merkmale };
+}
+function ergebnisAus(felder, inFrage, merkmale) {
+  const w = f => { const v = String(felder[f] || "").trim(); return v === "–" ? "" : v; };
+  const r = { besuche: [], rechtsCm: "", rechtsFrei: "", lage: "", merkmale: [], umfeld: "", inFrage: "", notiz: w("Notiz"),
+    fertig: true, wiederhergestellt: jetzt() };
+  const rf = w("Rechts frei"), cm = rf.match(/^(\d+(?:[.,]\d+)?)\s*cm/), reicht = rf.match(/reichen:\s*(ja|nein)/);
+  if (cm) r.rechtsCm = cm[1];
+  if (reicht) r.rechtsFrei = reicht[1];
+  r.lage = Object.keys(LAGE).find(k => LAGE[k] === w("Lage")) || "";
+  if (merkmale) { r.merkmale = merkmale; r.umfeld = w("Umfeld"); }
+  else {   // im PDF: "Hauptstraße, Eisdiele, Grundschule gegenüber" -> antippbare Merkmale + freier Text
+    const teile = w("Umfeld") ? w("Umfeld").split(", ") : [];
+    r.merkmale = teile.filter(t => MERKMALE.includes(t)); r.umfeld = teile.filter(t => !MERKMALE.includes(t)).join(", ");
+  }
+  const kif = w("Kommt in Frage");
+  r.inFrage = inFrage || (kif === "ja" || kif === "nein" ? kif : "");
+  for (const m of w("Besichtigt").matchAll(/(\d{2})\.(\d{2})\.(\d{4})/g)) {
+    const t = new Date(+m[3], +m[2] - 1, +m[1], 12).toISOString(); r.besuche.push({ start: t, ende: t, wieder: true });
+  }
+  return r;
+}
+// Namensbalken oben abschneiden: Zeilen, deren Rand (links und rechts, dort steht nie Schrift) balkenblau ist
+async function balkenAb(blob) {
+  try {
+    const b = await createImageBitmap(blob), w = b.width, h = b.height;
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const x = c.getContext("2d"); x.drawImage(b, 0, 0);
+    const li = x.getImageData(0, 0, 3, h).data, re = x.getImageData(w - 3, 0, 3, h).data;
+    const blau = (d, y) => { const i = (y * 3 + 1) * 4; return Math.abs(d[i] - 15) + Math.abs(d[i + 1] - 42) + Math.abs(d[i + 2] - 74) < 60; };
+    let y = 0; while (y < h * 0.3 && blau(li, y) && blau(re, y)) y++;
+    if (y < 12) return blob;   // kein Balken
+    const o = document.createElement("canvas"); o.width = w; o.height = h - y;
+    o.getContext("2d").drawImage(c, 0, y, w, h - y, 0, 0, w, h - y);
+    return await new Promise(res => o.toBlob(r => res(r || blob), "image/jpeg", 0.9));
+  } catch (err) { return blob; }
+}
+async function zipEinlesen(datei) {
+  if (!datei) return;
+  zeige("ZIP wird gelesen …", 60000);
+  let geschafft = false;
+  try {
+    const eintraege = await zipLesen(datei);
+    const nachOrdner = {};   // Kundenordner -> Kunde ("W01 Name - Ort" ab 04.11., "W1 Name - Ort" davor)
+    for (const k of kunden) { nachOrdner[ordnerName(k)] = k; nachOrdner[sauber(`${k.nr} ${k.name} - ${k.ort}`)] = k; }
+    const funde = {}, fund = k => funde[k.id] = funde[k.id] || { k, r: null, fotos: [], gruppe: "" };
+    let fremd = 0;
+    for (const e of eintraege) {
+      const teile = e.name.split("/"), dname = teile[teile.length - 1];
+      if (/\.pdf$/i.test(dname)) {
+        const roh = new TextDecoder("windows-1252").decode(await (await e.inhalt()).arrayBuffer());
+        for (const a of angabenAusPdf(roh)) {
+          const k = kunden.find(x => x.nr === a.nr);
+          if (!k || norm(k.name) !== norm(a.name)) { fremd++; continue; }
+          fund(k).r = ergebnisAus(a.felder, a.inFrage);
+        }
+        continue;
+      }
+      const k = teile.length >= 2 ? nachOrdner[teile[teile.length - 2]] : null;
+      if (!k) { if (/\.(jpe?g|png)$/i.test(dname)) fremd++; continue; }
+      const f = fund(k);
+      if (teile.includes(OBER.ja)) f.gruppe = "ja"; else if (teile.includes(OBER.nein)) f.gruppe = "nein";
+      if (dname === "Steckbrief.html") {
+        const s = angabenAusSteckbrief(await (await e.inhalt()).text());
+        if (!f.r) f.r = ergebnisAus(s.felder, "", s.merkmale);
+        continue;
+      }
+      const art = Object.keys(ART_NAME).find(a => dname.startsWith(ART_NAME[a] + " "));
+      if (art && /\.(jpe?g|png)$/i.test(dname)) f.fotos.push({ e, art, nr: +((dname.match(/(\d+)\.\w+$/) || [0, 0])[1]) });
+    }
+    const liste = Object.values(funde);
+    if (!liste.length) { alert("In dieser ZIP wurde kein Kunde aus der geladenen Liste gefunden."); return; }
+    const belegt = [];
+    for (const f of liste) if (hatDaten(erg[f.k.id]) || (await medienVon(f.k.id)).length) belegt.push(f);
+    const neu = liste.filter(f => !belegt.includes(f)), nFotos = neu.reduce((s, f) => s + f.fotos.length, 0);
+    const hinweis = (belegt.length ? `\n\nSchon im Werkzeug, bleibt unverändert: ${belegt.map(f => f.k.nr).join(", ")}` : "")
+      + (fremd ? `\n\n${fremd} Eintrag/Einträge passen zu keinem Kunden der geladenen Liste und werden übergangen.` : "");
+    if (!neu.length) { alert("Alle Kunden aus dieser ZIP haben im Werkzeug schon Angaben – nichts überschrieben." + hinweis); return; }
+    if (!confirm(`In der ZIP gefunden: ${standorte(neu.length)} mit ${nFotos} Foto(s).${hinweis}\n\nJetzt ins Werkzeug übernehmen?`)) return;
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    let n = 0;
+    for (const f of neu) {
+      f.fotos.sort((a, b) => a.art === b.art ? a.nr - b.nr : a.art === "mass" ? -1 : 1);
+      const t0 = Date.now();
+      for (const [i, foto] of f.fotos.entries()) {
+        const blob = await balkenAb(await foto.e.inhalt());
+        await medienSpeichern({ id: f.k.id + "|" + Date.now() + "|" + Math.random().toString(36).slice(2, 7), kunde: f.k.id,
+          art: foto.art, typ: blob.type || "image/jpeg", name: foto.e.name.split("/").pop(), blob,
+          zeit: new Date(t0 + i * 1000).toISOString(), wiederhergestellt: true });
+        zeige(`Fotos werden übernommen … ${++n} / ${nFotos}`, 60000);
+      }
+      const r = f.r || ergebnisAus({}, f.gruppe);
+      if (!r.inFrage) r.inFrage = f.gruppe;
+      erg[f.k.id] = r; sichern(f.k.id);
+    }
+    Object.keys(cache).forEach(k => { (cache[k] || []).forEach(m => m.url && URL.revokeObjectURL(m.url)); delete cache[k]; });
+    ui.ansicht = "liste"; ui.nurOffen = false; geschafft = true;
+    zeige(`${standorte(neu.length)} und ${nFotos} Foto(s) wiederhergestellt ✓`, 5000);
+  } catch (err) {
+    alert("Die ZIP konnte nicht gelesen werden: " + (err && err.message || err));
+  } finally {
+    if (!geschafft) zeige("Nichts geändert.", 1500);
+    zeichnen();
+  }
+}
+document.getElementById("wahlZip").addEventListener("change", ev => { const f = ev.target.files[0]; ev.target.value = ""; zipEinlesen(f); });
+
 /* ================= Ansichten ================= */
 function zeichnen() {
   const app = document.getElementById("app");
@@ -1085,6 +1264,7 @@ function ansichtLeer() {
     <p>Die Liste kommt per AirDrop vom Mac. Danach hier tippen und die Datei aus „Downloads“ wählen.</p>
     <button class="gross start" data-akt="laden">Kundenliste laden</button>
     <p class="klein">Die Liste bleibt nur auf diesem Handy. Es wird nichts an einen Server geschickt.</p>
+    <p class="klein">Schon besichtigt und die App war weg? Erst die Liste laden, dann unter „Mehr“ → „Aus ZIP wiederherstellen“.</p>
   </div></main>`;
 }
 
@@ -1127,6 +1307,8 @@ function ansichtMehr() {
   <main>
     <div class="karte"><b>ZIP für den Chef</b><p class="klein">Vorschau ansehen und als ZIP auf dem iPhone sichern („In Dateien sichern“) oder weitergeben. Abends einmal sichern – das ist zugleich Ihre Sicherung der Fotos.</p>
       <button class="gross start" data-akt="zip">ZIP-Vorschau</button></div>
+    <div class="karte"><b>Aus ZIP wiederherstellen</b><p class="klein">Holt Angaben und Fotos aus einer ZIP zurück, die mit diesem Werkzeug erstellt wurde – z. B. nachdem die App gelöscht wurde oder auf einem neuen Handy. Vorher die Kundenliste laden. Was im Werkzeug schon steht, wird nicht überschrieben.</p>
+      <button class="knopf2" data-akt="zipeinlesen">ZIP wählen</button></div>
     <div class="karte"><b>Maßband-Fotos zuordnen</b><p class="klein">Abends alle Maßband-Fotos des Tages auf einmal markieren. Jedes Foto geht zu dem Kunden, bei dem Sie zur Aufnahmezeit waren („Ich bin da“ bis „Fertig“). Vor dem Übernehmen sehen Sie die Zuordnung, Unklares ist orange.</p>
       <button class="gross start" data-akt="sammeln">📷 Fotos zuordnen</button></div>
     <div class="karte"><b>Ergebnisse an den Mac</b><p class="klein">Nur die Angaben (ohne Fotos) als kleine Datei, z. B. per AirDrop.</p>
@@ -1306,6 +1488,7 @@ document.addEventListener("click", async ev => {
   if (akt !== "liste" && akt !== "oeffnen") eingabenUebernehmen();
   if (akt === "laden") return document.getElementById("datei").click();
   if (akt === "senden") return senden();
+  if (akt === "zipeinlesen") return document.getElementById("wahlZip").click();
   if (akt === "zipbauen") return zipErstellen();
   if (akt === "uebersicht") return uebersichtTeilen();
   if (akt === "sammeln") return document.getElementById("wahlSammel").click();
