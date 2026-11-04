@@ -570,7 +570,7 @@ function zipPlan(medienListe) {
   }
   return plan;
 }
-function ordnerName(k) { return sauber(`${k.nr} ${k.name} - ${k.ort}`); }
+function ordnerName(k) { return sauber(`${nrSortierbar(k.nr)} ${k.name} - ${k.ort}`); }
 const OBER = { ja: "1 Kommt in Frage", nein: "2 Kommt nicht in Frage" };
 const ART_NAME = { front: "Foto frontal", mass: "Maß rechts", video: "Video", montage: "Mit Anbau (Fotomontage)" };
 function dateiNamen(medien) {
@@ -775,6 +775,208 @@ ${plan.offen.length ? `<h2>Noch nicht besichtigt (${plan.offen.length})</h2><p c
 </div><footer>In der ZIP liegt je Standort zusätzlich ein Ordner mit Steckbrief und den Maß-Fotos in voller Größe.${info.vermerk ? `<br>${esc(info.vermerk)}` : ""}</footer>
 </td></tr></tbody></table></body></html>`;
 }
+/* ================= PDF = End-Dokument =================
+   Mirko 04.11.2026: "die fertige ZIP soll jeden Kunden mit allen Infos und Fotos mitbringen" - in der ZIP
+   blaetterte man Foto fuer Foto ohne Angaben. Jetzt EIN PDF: Uebersicht + je Kunde eine Seite mit allen
+   Angaben und Fotos, in Fahrreihenfolge. Eigener kleiner PDF-Schreiber (keine fremde Bibliothek).
+   Druck-Wasserzeichen als PDF-Ebene "nur beim Drucken": am Bildschirm in jedem Programm unsichtbar,
+   Adobe Reader druckt sie mit, andere Programme lassen sie womoeglich weg. Kopfzeile mit dem Namen
+   steht immer auf jeder Seite. */
+const PDF_W = 595.28, PDF_H = 841.89, RAND = 40;
+const WINANSI = { "€": 128, "‚": 130, "„": 132, "…": 133, "‘": 145, "’": 146, "“": 147, "”": 148, "•": 149, "–": 150, "—": 151 };
+function pdfStr(s) {
+  let o = "";
+  for (const ch of String(s == null ? "" : s)) {
+    let c = WINANSI[ch] !== undefined ? WINANSI[ch] : ch.codePointAt(0);
+    if (c > 255) c = 63;
+    const z = String.fromCharCode(c);
+    o += (z === "(" || z === ")" || z === "\\") ? "\\" + z : z;
+  }
+  return "(" + o + ")";
+}
+const messer = document.createElement("canvas").getContext("2d");
+function textBreite(t, gr, fett) { messer.font = `${fett ? "bold " : ""}${gr}px Helvetica, Arial, sans-serif`; return messer.measureText(String(t)).width; }
+function umbrechen(t, maxW, gr, fett) {
+  const zeilen = [];
+  for (const absatz of String(t == null ? "" : t).split(/\n/)) {
+    let z = "";
+    for (const w of absatz.split(/\s+/).filter(Boolean)) {
+      const v = z ? z + " " + w : w;
+      if (!z || textBreite(v, gr, fett) <= maxW) z = v; else { zeilen.push(z); z = w; }
+    }
+    zeilen.push(z);
+  }
+  return zeilen;
+}
+function kuerzen(t, maxW, gr, fett) {
+  t = String(t || ""); if (textBreite(t, gr, fett) <= maxW) return t;
+  while (t.length > 1 && textBreite(t + "…", gr, fett) > maxW) t = t.slice(0, -1);
+  return t + "…";
+}
+const zahl = n => String(Math.round(n * 100) / 100);
+class PdfDok {
+  constructor(titel, autor) { this.seiten = []; this.bilder = []; this.titel = titel; this.autor = autor; this.y = 0; }
+  seite() { this.s = { ops: [], bilder: [] }; this.seiten.push(this.s); this.y = 0; }
+  farbe(hex, strich) { const n = parseInt(hex.slice(1), 16);
+    this.s.ops.push(`${zahl((n >> 16 & 255) / 255)} ${zahl((n >> 8 & 255) / 255)} ${zahl((n & 255) / 255)} ${strich ? "RG" : "rg"}`); }
+  rechteck(x, y, w, h, hex) { this.farbe(hex); this.s.ops.push(`${zahl(x)} ${zahl(PDF_H - y - h)} ${zahl(w)} ${zahl(h)} re f`); }
+  linie(x1, y1, x2, y2, hex) { this.farbe(hex, true); this.s.ops.push(`0.6 w ${zahl(x1)} ${zahl(PDF_H - y1)} m ${zahl(x2)} ${zahl(PDF_H - y2)} l S`); }
+  text(t, x, y, gr, o = {}) {   // y = Oberkante der Zeile
+    this.farbe(o.farbe || "#111827");
+    const xx = o.rechts ? x - textBreite(t, gr, o.fett) : x;
+    this.s.ops.push(`BT /${o.fett ? "F2" : "F1"} ${gr} Tf ${zahl(xx)} ${zahl(PDF_H - y - gr * 0.82)} Td ${pdfStr(t)} Tj ET`);
+  }
+  absatz(t, x, y, maxW, gr, o = {}) { const z = umbrechen(t, maxW, gr, o.fett); z.forEach((l, i) => this.text(l, x, y + i * gr * 1.32, gr, o)); return z.length * gr * 1.32; }
+  bildNeu(b) { this.bilder.push(b); return this.bilder.length - 1; }
+  bild(i, x, y, w, h) { if (!this.s.bilder.includes(i)) this.s.bilder.push(i);
+    this.s.ops.push(`q ${zahl(w)} 0 0 ${zahl(h)} ${zahl(x)} ${zahl(PDF_H - y - h)} cm /Im${i} Do Q`); }
+  wasserzeichen(t) {   // Ebene oc1: nur beim Drucken
+    if (!t) return;
+    const c = Math.cos(Math.PI / 6), s = Math.sin(Math.PI / 6), ops = ["/OC /oc1 BDC q /GS1 gs 0.06 0.16 0.29 rg"];
+    for (let r = 0, yy = -120; yy < PDF_H + 160; r++, yy += 72)
+      for (let xx = -260 + (r % 2) * 95; xx < PDF_W + 60; xx += 190)
+        ops.push(`BT /F2 22 Tf ${zahl(c)} ${zahl(s)} ${zahl(-s)} ${zahl(c)} ${zahl(xx)} ${zahl(yy)} Tm ${pdfStr(t)} Tj ET`);
+    ops.push("Q EMC"); this.s.ops.push(...ops);
+  }
+  blob() {
+    const teile = [], offs = []; let pos = 0;
+    const enc = s => { const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255; return u; };
+    const add = d => { const u = typeof d === "string" ? enc(d) : d; teile.push(u); pos += u.length; };
+    const obj = (n, kopf, strom) => { offs[n] = pos; add(`${n} 0 obj\n${kopf}\n`); if (strom) { add("stream\n"); add(strom); add("\nendstream\n"); } add("endobj\n"); };
+    const nb = this.bilder.length, bildNr = i => 7 + i, seiteNr = j => 7 + nb + 2 * j, inhaltNr = j => 8 + nb + 2 * j;
+    const gesamt = 6 + nb + 2 * this.seiten.length;
+    add("%PDF-1.5\n%\xE2\xE3\xCF\xD3\n");
+    obj(1, "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [3 0 R] /D << /Order [3 0 R] /OFF [3 0 R] /AS [" +
+      "<< /Event /Print /OCGs [3 0 R] /Category [/Print] >> << /Event /View /OCGs [3 0 R] /Category [/View] >>] >> >> >>");
+    obj(2, `<< /Type /Pages /Kids [${this.seiten.map((_, j) => seiteNr(j) + " 0 R").join(" ")}] /Count ${this.seiten.length} >>`);
+    obj(3, "<< /Type /OCG /Name (Druck-Wasserzeichen) /Usage << /Print << /PrintState /ON >> /View << /ViewState /OFF >> >> >>");
+    obj(4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+    obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+    obj(6, `<< /Title ${pdfStr(this.titel)} /Author ${pdfStr(this.autor)} /Creator (Besichtigung) >>`);
+    this.bilder.forEach((b, i) => obj(bildNr(i), `<< /Type /XObject /Subtype /Image /Width ${b.w} /Height ${b.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${b.bytes.length} >>`, b.bytes));
+    this.seiten.forEach((s, j) => {
+      obj(seiteNr(j), `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PDF_W} ${PDF_H}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> ` +
+        `/XObject << ${s.bilder.map(i => `/Im${i} ${bildNr(i)} 0 R`).join(" ")} >> /ExtGState << /GS1 << /Type /ExtGState /ca 0.16 /CA 0.16 >> >> ` +
+        `/Properties << /oc1 3 0 R >> >> /Contents ${inhaltNr(j)} 0 R >>`);
+      const inhalt = enc(s.ops.join("\n"));
+      obj(inhaltNr(j), `<< /Length ${inhalt.length} >>`, inhalt);
+    });
+    const xref = pos;
+    let x = `xref\n0 ${gesamt + 1}\n0000000000 65535 f \n`;
+    for (let n = 1; n <= gesamt; n++) x += String(offs[n]).padStart(10, "0") + " 00000 n \n";
+    add(x + `trailer\n<< /Size ${gesamt + 1} /Root 1 0 R /Info 6 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+    return new Blob(teile, { type: "application/pdf" });
+  }
+}
+async function pdfBild(blob, max) {
+  const b = await createImageBitmap(blob, { imageOrientation: "from-image" });
+  const f = Math.min(1, max / Math.max(b.width, b.height));
+  const c = document.createElement("canvas"); c.width = Math.round(b.width * f); c.height = Math.round(b.height * f);
+  const x = c.getContext("2d"); x.fillStyle = "#ffffff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(b, 0, 0, c.width, c.height);
+  const j = await new Promise(res => c.toBlob(res, "image/jpeg", 0.82));
+  return { bytes: new Uint8Array(await j.arrayBuffer()), w: c.width, h: c.height };
+}
+async function pdfErstellen(plan, stempel, fortschritt) {
+  const doc = new PdfDok(info.titel || "Besichtigung", info.autor || "");
+  const B = PDF_W - 2 * RAND, UNTEN = PDF_H - 46;
+  const neu = () => {   // jede Seite: Kopfzeile mit dem Namen
+    doc.seite(); doc.rechteck(0, 0, PDF_W, 26, "#0b2038");
+    doc.text(kuerzen([info.vermerk, info.titel].filter(Boolean).join(" · "), B, 9, true), RAND, 8.5, 9, { fett: true, farbe: "#ffffff" });
+    doc.y = 46;
+  };
+  const alle = [...plan.ja, ...plan.nein];
+  // ---- Seite 1: Uebersicht ----
+  neu();
+  doc.text(info.titel || "Standort-Besichtigung", RAND, doc.y, 20, { fett: true }); doc.y += 30;
+  doc.text(`Stand ${new Date().toLocaleDateString("de-DE")} · ${standorte(alle.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage · ${plan.nein.length} nicht`, RAND, doc.y, 10, { farbe: "#374151" });
+  doc.y += 15;
+  const zr = zeitraum(plan); if (zr) { doc.text(zr, RAND, doc.y, 10, { farbe: "#374151" }); doc.y += 15; }
+  if (info.auswahl) {
+    const z = umbrechen(info.auswahl, B - 20, 10), h = z.length * 13.2 + 14;
+    doc.y += 6; doc.rechteck(RAND, doc.y, B, h, "#eef2ff"); doc.rechteck(RAND, doc.y, 3, h, "#0f2a4a");
+    z.forEach((l, i) => doc.text(l, RAND + 12, doc.y + 7 + i * 13.2, 10)); doc.y += h + 10;
+  }
+  doc.text("Benötigt werden rechts neben dem Automaten 90–100 cm. Je Standort folgt eine Seite mit allen Angaben und Fotos.", RAND, doc.y, 9, { farbe: "#6b7280" });
+  doc.y += 20;
+  const SP = [[0, 34, "Nr."], [34, 160, "Kunde / Dulder"], [194, 112, "Ort"], [306, 62, "Rechts frei"], [368, 40, "reicht"], [408, 107, "Lage"]];
+  const tabelle = (liste, titel, farbe) => {
+    if (doc.y > UNTEN - 60) neu();
+    doc.text(`${titel} (${liste.length})`, RAND, doc.y, 12, { fett: true, farbe }); doc.y += 18;
+    if (!liste.length) { doc.text("–", RAND, doc.y, 10, { farbe: "#6b7280" }); doc.y += 18; return; }
+    SP.forEach(([x, w, t]) => doc.text(t, RAND + x, doc.y, 8, { fett: true, farbe: "#6b7280" })); doc.y += 13;
+    liste.forEach((e, i) => {
+      if (doc.y > UNTEN - 16) { neu(); SP.forEach(([x, w, t]) => doc.text(t, RAND + x, doc.y, 8, { fett: true, farbe: "#6b7280" })); doc.y += 13; }
+      if (i % 2 === 0) doc.rechteck(RAND - 4, doc.y - 3, B + 8, 15, "#f3f4f6");
+      const k = e.k, r = e.r;
+      const werte = [k.nr, k.name, k.ort, r.rechtsCm ? r.rechtsCm + " cm" : "–", r.rechtsFrei || "–", LAGE[r.lage] || "–"];
+      SP.forEach(([x, w], j) => doc.text(kuerzen(werte[j], w - 6, 9, j === 1), RAND + x, doc.y, 9, { fett: j === 1 }));
+      doc.y += 15;
+    });
+    doc.y += 12;
+  };
+  tabelle(plan.ja, "Kommt in Frage", "#047857");
+  tabelle(plan.nein, "Kommt nicht in Frage", "#b91c1c");
+  if (plan.offen.length) {
+    if (doc.y > UNTEN - 50) neu();
+    doc.text(`Noch nicht besichtigt (${plan.offen.length})`, RAND, doc.y, 11, { fett: true, farbe: "#374151" }); doc.y += 16;
+    doc.y += doc.absatz(plan.offen.map(x => `${x.k.nr} ${x.k.name} (${x.k.ort})`).join(" · "), RAND, doc.y, B, 8, { farbe: "#6b7280" });
+  }
+  // ---- je Kunde eine Seite ----
+  let fertigeBilder = 0; const alleBilder = alle.reduce((s, e) => s + e.medien.length, 0);
+  for (const e of alle) {
+    const k = e.k, r = e.r, ja = r.inFrage === "ja";
+    neu();
+    doc.text(`${k.nr} · ${k.name}`, RAND, doc.y, 18, { fett: true });
+    doc.text(ja ? "kommt in Frage" : "kommt nicht in Frage", PDF_W - RAND, doc.y + 4, 11, { fett: true, rechts: true, farbe: ja ? "#047857" : "#b91c1c" });
+    doc.y += 24;
+    if (k.name2) { doc.text(k.name2, RAND, doc.y, 11, { farbe: "#6b7280" }); doc.y += 16; }
+    doc.y += 4;
+    const zeilen = [
+      ["Adresse", `${adresse(k)}, ${k.plz} ${k.ort}`], ["Telefon", k.tel || "–"],
+      ["Automat", (k.aut || "–") + (k.schl ? " · Schlüssel " + k.schl : "")],
+      ["Typ / Anbau", `${k.typ || "–"} · ${scText(k.sc)} · Turnus ${k.turnus || "–"}`],
+      ["Rechts frei", (r.rechtsCm ? r.rechtsCm + " cm" : "–") + (r.rechtsFrei ? " · 90–100 cm reichen: " + r.rechtsFrei : ""), true],
+      ["Lage", LAGE[r.lage] || "–"], ["Umfeld", umfeldText(r) || "–"], ["Notiz", r.notiz || "–"],
+      ["Besichtigt", besuchsTage(r).join(", ") || "–"]];
+    for (const [l, w, fett] of zeilen) {
+      doc.text(l, RAND, doc.y + 1, 9, { farbe: "#6b7280" });
+      doc.y += Math.max(14, doc.absatz(w, RAND + 92, doc.y, B - 92, 10, { fett })) + 3;
+    }
+    doc.y += 6; doc.linie(RAND, doc.y, PDF_W - RAND, doc.y, "#d1d5db"); doc.y += 12;
+    const bilderZeigen = async (liste, ueberschrift) => {
+      if (!liste.length) return;
+      if (ueberschrift) { if (doc.y > UNTEN - 120) neu(); doc.text(ueberschrift, RAND, doc.y, 10, { fett: true, farbe: "#374151" }); doc.y += 16; }
+      for (let i = 0; i < liste.length; i += 2) {
+        const paar = liste.slice(i, i + 2);
+        const bilder = [];
+        for (const m of paar) { bilder.push(await pdfBild(stempel.get(m.id) || m.blob, 1400)); if (fortschritt) fortschritt(++fertigeBilder, alleBilder); }
+        const breit = paar.length === 1 && bilder[0].w > bilder[0].h;
+        const zw = breit ? B : (B - 14) / 2;
+        let zh = Math.min(430, UNTEN - doc.y);
+        if (zh < 180) { neu(); zh = Math.min(430, UNTEN - doc.y); }
+        let hoch = 0;
+        bilder.forEach((b, j) => { const f = Math.min(zw / b.w, zh / b.h), w = b.w * f, h = b.h * f;
+          doc.bild(doc.bildNeu(b), RAND + j * (zw + 14), doc.y, w, h); hoch = Math.max(hoch, h); });
+        doc.y += hoch + 12;
+      }
+    };
+    const mass = e.medien.filter(m => m.art !== "montage"), mont = e.medien.filter(m => m.art === "montage");
+    if (!mass.length) { doc.text("kein Maß-Foto", RAND, doc.y, 10, { farbe: "#6b7280" }); doc.y += 16; }
+    await bilderZeigen(mass, "");
+    await bilderZeigen(mont, MONTAGE_TEXT);
+  }
+  // ---- Fuss + Druck-Wasserzeichen auf jeder Seite ----
+  doc.seiten.forEach((s, j) => {
+    doc.s = s;
+    doc.text(info.vermerk || "", RAND, PDF_H - 28, 8, { farbe: "#6b7280" });
+    doc.text(`Seite ${j + 1} von ${doc.seiten.length}`, PDF_W - RAND, PDF_H - 28, 8, { rechts: true, farbe: "#6b7280" });
+    doc.wasserzeichen(info.autor);
+  });
+  return doc.blob();
+}
+// Ordner/Nummern sortierbar: W1 -> W01, 7 -> 07 (sonst steht W10 vor W2)
+function nrSortierbar(nr) { const m = String(nr).match(/^([A-Za-z]*)(\d+)$/); return m ? m[1] + m[2].padStart(2, "0") : String(nr); }
+
 async function teilen(datei) {
   try {
     if (navigator.canShare && navigator.canShare({ files: [datei] })) { await navigator.share({ files: [datei], title: datei.name }); return; }
@@ -783,21 +985,23 @@ async function teilen(datei) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 function heute() { const d = new Date(), z = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`; }
-// Nur das End-Dokument als eine Datei (klein, gut fuer Mail) - ohne ZIP
+const pdfName = () => `${sauber(info.titel || "Besichtigung")} ${heute()}.pdf`;
+// Nur das End-Dokument (PDF) - eine Datei, gut fuer die Mail
 async function uebersichtTeilen() {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
   try {
     const plan = zipPlan(await medienAlle());
     if (!plan.ja.length && !plan.nein.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Nein“."); return; }
     const stempel = await stempelAlle(plan, (n, g) => zeige(`Fotos werden beschriftet … ${n} / ${g}`, 20000));
-    const bilder = await uebersichtBilder(plan, stempel);
-    const datei = new File([uebersicht(plan, bilder)], `${sauber(info.titel || "Besichtigung")} – Übersicht ${heute()}.html`, { type: "text/html" });
-    zeige("Übersicht fertig (" + mb(datei.size) + ")");
+    const pdf = await pdfErstellen(plan, stempel, (n, g) => zeige(`PDF wird erstellt … Foto ${n} / ${g}`, 20000));
+    const datei = new File([pdf], pdfName(), { type: "application/pdf" });
+    zeige("PDF fertig (" + mb(datei.size) + ")");
     await teilen(datei);
   } catch (err) {
-    alert("Übersicht konnte nicht erstellt werden: " + (err && err.message || err));
+    alert("PDF konnte nicht erstellt werden: " + (err && err.message || err));
   } finally { ui.zipLaeuft = false; zeichnen(); }
 }
+// ZIP = das PDF + die Fotos in voller Groesse (sortiert: 1 Kommt in Frage / W01 ..., 02 ...)
 async function zipErstellen() {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
   try {
@@ -805,11 +1009,10 @@ async function zipErstellen() {
     if (!plan.ja.length && !plan.nein.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Nein“ – die ZIP wäre leer."); return; }
     const eintraege = [];
     const stempel = await stempelAlle(plan, (n, g) => zeige(`Fotos werden beschriftet … ${n} / ${g}`, 20000));
-    const bilder = await uebersichtBilder(plan, stempel);
-    eintraege.push({ name: "Übersicht.html", blob: new Blob([uebersicht(plan, bilder)], { type: "text/html" }) });
+    const pdf = await pdfErstellen(plan, stempel, (n, g) => zeige(`PDF wird erstellt … Foto ${n} / ${g}`, 20000));
+    eintraege.push({ name: pdfName(), blob: pdf });
     for (const gruppe of ["ja", "nein"]) for (const x of plan[gruppe]) {
-      const basis = `${OBER[gruppe]}/${ordnerName(x.k)}/`;
-      eintraege.push({ name: basis + "Steckbrief.html", blob: new Blob([steckbriefHtml(x.k, x.r, bilder[x.k.id] || [])], { type: "text/html" }) });
+      const basis = `Fotos in voller Größe/${OBER[gruppe]}/${ordnerName(x.k)}/`;
       const namen = dateiNamen(x.medien);
       x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: stempel.get(m.id) || m.blob }));   // beschriftete Fassung
     }
@@ -960,19 +1163,19 @@ function ansichtZip() {
     const mini = x.medien.map(m => { if (!m.typ.startsWith("image/")) return `<span>🎥</span>`;
       urls[m.id] = urls[m.id] || URL.createObjectURL(m.blob); return `<img src="${urls[m.id]}" alt="">`; }).join("");
     return `<button class="karte zipkunde" data-akt="oeffnen" data-id="${esc(k.id)}" style="width:100%;text-align:left;font:inherit;color:inherit">
-      <div class="titel">📁 ${esc(ordnerName(k))}</div>
-      <div class="datei">Steckbrief.html${namen.length ? " · " + namen.map(esc).join(" · ") : ""}</div>
+      <div class="titel">📄 ${esc(nrSortierbar(k.nr))} · ${esc(k.name)} – ${esc(k.ort)}</div>
+      <div class="datei">eigene Seite im PDF${namen.length ? " · " + namen.length + " Foto(s)" : ""}</div>
       ${mini ? `<div class="mini">${mini}</div>` : ""}
       <div class="klein">Rechts frei: ${r.rechtsCm ? esc(r.rechtsCm) + " cm" : "–"} · reicht: ${esc(r.rechtsFrei || "–")} · Lage: ${esc(LAGE[r.lage] || "–")}${umfeldText(r) ? " (" + esc(umfeldText(r).slice(0, 60)) + ")" : ""}${r.notiz ? " · " + esc(r.notiz.slice(0, 50)) : ""}</div>
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
   const groesse = [...plan.ja, ...plan.nein].reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
-    <div class="karte"><div>📄 <b>Übersicht.html</b> – alle Standorte auf einen Blick, mit den Maß-Fotos (klein, antippen = groß)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}${info.vermerk ? `<div class="klein" style="margin-top:4px">🔒 „${esc(info.vermerk)}“ steht als Kopfzeile auf der Übersicht (beim Drucken auf jeder Seite), in jedem Steckbrief und eingebrannt in jedem Maß-Foto.</div>` : ""}</div>
-      <div class="klein" style="margin-top:6px">${standorte(plan.ja.length + plan.nein.length)} in der ZIP · ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht in der ZIP)` : ""}</div></div>
+    <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}${info.vermerk ? `<div class="klein" style="margin-top:4px">🔒 „${esc(info.vermerk)}“ steht oben auf jeder Seite und eingebrannt in jedem Foto.</div>` : ""}</div>
+      <div class="klein" style="margin-top:6px">In der ZIP zusätzlich: Ordner „Fotos in voller Größe“. ${standorte(plan.ja.length + plan.nein.length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
     <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
-    <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur Übersicht teilen (eine Datei, mit Fotos)</button>
-    <div class="ordner">📁 ${OBER.ja} (${plan.ja.length})</div>${plan.ja.map(x => karte(x, "ja")).join("") || `<p class="klein">–</p>`}
-    <div class="ordner">📁 ${OBER.nein} (${plan.nein.length})</div>${plan.nein.map(x => karte(x, "nein")).join("") || `<p class="klein">–</p>`}
+    <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur PDF teilen (eine Datei, z. B. für die Mail)</button>
+    <div class="ordner">${OBER.ja} (${plan.ja.length})</div>${plan.ja.map(x => karte(x, "ja")).join("") || `<p class="klein">–</p>`}
+    <div class="ordner">${OBER.nein} (${plan.nein.length})</div>${plan.nein.map(x => karte(x, "nein")).join("") || `<p class="klein">–</p>`}
   </main>`;
 }
 
