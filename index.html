@@ -54,6 +54,7 @@
   .status.ja { background: var(--gruen-hell); color: var(--gruen); }
   .status.nein { background: var(--rot-hell); color: var(--rot); }
   .status.vielleicht { background: #fef9c3; color: #a16207; }
+  .status.tausch { background: #dbeafe; color: #1d4ed8; }
   .karte { background: #fff; border-radius: 14px; padding: 14px; border: 1px solid var(--linie); margin-bottom: 12px; }
   .karte h2 { margin: 0 0 4px; font-size: 21px; }
   .karte .z2 { color: #374151; font-size: 15px; margin-bottom: 8px; }
@@ -137,7 +138,7 @@ const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
 // Tourenplan-Karte aus der Kundenliste (eigener Schluessel: gross, und darf das Laden der Liste nie verhindern)
 const K_KARTE = "bes.karte";
 // Fassung des Programms - gleiche Nummer wie CACHE in sw.js; steht unter "Mehr"
-const FASSUNG = "26";
+const FASSUNG = "27";
 /* Mirko 04.11.2026: "koennen wir nicht einen Knopf aktualisieren einbauen, der neu laedt - bei mir klappt es
    mit neu laden in der App nicht". Loescht NUR den Programm-Zwischenspeicher (Cache Storage) - Angaben
    (localStorage) und Fotos (IndexedDB) bleiben unberuehrt - und holt die Seite frisch vom Server. */
@@ -167,8 +168,12 @@ function kundenNeu() { kunden = [...listenKunden, ...zusatz]; }
 kundenNeu();
 const ZUSATZ_FELDER = [["name", "Name / Dulder", true], ["strasse", "Straße", false], ["hnr", "Hausnummer", false],
   ["plz", "PLZ", false], ["ort", "Ort", true], ["modell", "Jetziges Automatenmodell", true],
-  ["aut", "Automatennummer", false], ["schl", "Schlüsselnummer", false], ["turnus", "Turnus", false]];
-const ZUSATZ_TITEL = "Zusätzlich – Automat tauschen";
+  ["aut", "Automatennummer", false], ["schl", "Schlüsselnummer", false], ["turnus", "Turnus", false],
+  ["bemerkung", "Bemerkung (z. B. läuft sehr gut, Ortsmitte)", false]];
+// Mirko 05.11.2026: "die neu hinzugefuegten nur als Austausch-Automaten ... den fahre ich auch nicht an fuer Fotos,
+// da gehe ich nur danach, dass ich weiss, sie laufen gut" -> reine Tausch-Vorschlaege: keine Besichtigung, keine Fotos
+const ZUSATZ_TITEL = "Zusätzlich vorgeschlagen: Automat tauschen (nicht besichtigt)";
+const ZUSATZ_SATZ = "Gut laufende Automaten an guten, zentralen Standorten. Dort steht ein anderes Modell; beim Tausch gegen einen Sielaff mit Anbau käme der bisherige Automat weg. Auswahl aus meiner Tourenerfahrung, nicht eigens angefahren.";
 const istZusatz = k => !!k && k.gruppe === "zusatz";
 const nrFrei = nr => !zusatz.some(z => z.nr === nr);
 function zusatzSichern() { schreiben(K_ZUSATZ, zusatz); kundenNeu(); }
@@ -287,6 +292,7 @@ function zeige(text, ms) { const m = document.getElementById("meldung"); m.textC
 function anzahl(kid, art) { return (cache[kid] || []).filter(m => m.art === art).length; }
 
 function status(id) {
+  if (zusatz.some(z => z.id === id)) return { k: "tausch", t: "Tausch-Vorschlag" };
   const r = erg[id];
   if (!r || (!r.besuche.length && !r.fertig)) return { k: "offen", t: "offen" };
   if (!r.fertig) return { k: "laeuft", t: "begonnen" };
@@ -467,7 +473,7 @@ function ansichtZuordnen() {
   const S = ui.sammel || [];
   const besucht = kunden.filter(k => ((erg[k.id] || {}).besuche || []).length)
     .sort((a, b) => erg[a.id].besuche[0].start.localeCompare(erg[b.id].besuche[0].start));
-  const rest = kunden.filter(k => !besucht.includes(k));
+  const rest = kunden.filter(k => !besucht.includes(k) && !istZusatz(k));   // Tausch-Vorschlaege haben keine Fotos
   const opt = (k, sel) => `<option value="${esc(k.id)}" ${sel === k.id ? "selected" : ""}>${esc(k.nr)} ${esc(k.name)}</option>`;
   const sicher = S.filter(s => s.kid && s.sicher).length, gewaehlt = S.filter(s => s.kid).length;
   return `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="liste">‹ Liste</button></div><h1>Fotos zuordnen</h1>
@@ -616,8 +622,8 @@ function zipPlan(medienListe) {
   for (const k of kunden) {
     const r = erg[k.id] || {};
     const m = (proKunde[k.id] || []).filter(x => ZIP_ARTEN.includes(x.art)).sort((a, b) => a.zeit.localeCompare(b.zeit));
-    const bew = ERGEBNIS.some(g => g.k === r.inFrage);   // Zusaetzliche: eigene Gruppe, Ergebnis bleibt r.inFrage
-    (plan[!bew ? "offen" : istZusatz(k) ? "zusatz" : r.inFrage]).push({ k, r, medien: m });
+    const bew = ERGEBNIS.some(g => g.k === r.inFrage);   // Tausch-Vorschlaege: immer eigene Gruppe, ohne Besichtigung
+    (plan[istZusatz(k) ? "zusatz" : !bew ? "offen" : r.inFrage]).push({ k, r, medien: m });
   }
   return plan;
 }
@@ -628,13 +634,13 @@ const ERGEBNIS = [
   { k: "ja", titel: "Kommt in Frage", klein: "kommt in Frage", farbe: "#047857" },
   { k: "vielleicht", titel: "Kommt vielleicht in Frage", klein: "kommt vielleicht in Frage", farbe: "#a16207" },
   { k: "nein", titel: "Kommt nicht in Frage", klein: "kommt nicht in Frage", farbe: "#b91c1c" }];
-const bewertet = plan => [...ERGEBNIS.flatMap(g => plan[g.k]), ...(plan.zusatz || [])];
+const bewertet = plan => ERGEBNIS.flatMap(g => plan[g.k]);   // nur besichtigte - Tausch-Vorschlaege stehen in plan.zusatz
+const vorOrtSatz = plan => plan.zusatz.length ? VOR_ORT.replace("Alle Standorte", "Alle Anbau-Standorte") : VOR_ORT;
 // Ordner in der ZIP, durchnummeriert nur ueber die Gruppen, die es gibt ("1 Kommt in Frage", "2 Kommt nicht in Frage" ...)
 function oberOrdner(plan) {
   const aus = {}; let n = 0;
   for (const g of ERGEBNIS) if (plan[g.k].length || g.k !== "vielleicht") aus[g.k] = `${++n} ${g.titel}`;
-  if ((plan.zusatz || []).length) aus.zusatz = `${++n} ${ZUSATZ_TITEL}`;
-  return aus;
+  return aus;   // Tausch-Vorschlaege haben keine Fotos -> kein Ordner
 }
 // alte Steckbrief-ZIP (03.11.) und Test: feste Namen der beiden Ordner von damals
 const OBER = { ja: "1 Kommt in Frage", nein: "2 Kommt nicht in Frage" };
@@ -952,7 +958,7 @@ async function pdfErstellen(plan, stempel, fortschritt) {
   // ---- Seite 1: Uebersicht ----
   neu();
   doc.text(info.titel || "Standort-Besichtigung", RAND, doc.y, 20, { fett: true }); doc.y += 30;
-  doc.text(`Stand ${new Date().toLocaleDateString("de-DE")} · ${standorte(alle.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage${plan.vielleicht.length ? ` · ${plan.vielleicht.length} vielleicht` : ""} · ${plan.nein.length} nicht${plan.zusatz.length ? ` · ${plan.zusatz.length} zusätzlich (Automat tauschen)` : ""}`, RAND, doc.y, 10, { farbe: "#374151" });
+  doc.text(`Stand ${new Date().toLocaleDateString("de-DE")} · ${standorte(alle.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage${plan.vielleicht.length ? ` · ${plan.vielleicht.length} vielleicht` : ""} · ${plan.nein.length} nicht${plan.zusatz.length ? ` · ${plan.zusatz.length} zusätzlich zum Tausch vorgeschlagen` : ""}`, RAND, doc.y, 10, { farbe: "#374151" });
   doc.y += 15;
   const zr = zeitraum(plan); if (zr) { doc.text(zr, RAND, doc.y, 10, { farbe: "#374151" }); doc.y += 15; }
   if (info.auswahl) {
@@ -960,14 +966,15 @@ async function pdfErstellen(plan, stempel, fortschritt) {
     doc.y += 6; doc.rechteck(RAND, doc.y, B, h, "#eef2ff"); doc.rechteck(RAND, doc.y, 3, h, "#0f2a4a");
     z.forEach((l, i) => doc.text(l, RAND + 12, doc.y + 7 + i * 13.2, 10)); doc.y += h + 10;
   }
-  doc.y += doc.absatz(VOR_ORT, RAND, doc.y, B, 10, { fett: true, farbe: "#0f2a4a" }) + 8;
+  doc.y += doc.absatz(vorOrtSatz(plan), RAND, doc.y, B, 10, { fett: true, farbe: "#0f2a4a" }) + 8;
   doc.text("Benötigt werden rechts neben dem Automaten 90–100 cm. Je Standort folgt eine Seite mit allen Angaben und Fotos.", RAND, doc.y, 9, { farbe: "#6b7280" });
   doc.y += 20;
   const SP = [[0, 34, "Nr."], [34, 160, "Kunde / Dulder"], [194, 112, "Ort"], [306, 62, "Rechts frei"], [368, 40, "reicht"], [408, 107, "Lage"]];
   const standardWerte = (k, r) => [k.nr, k.name, k.ort, r.rechtsCm ? r.rechtsCm + " cm" : "–", r.rechtsFrei || "–", LAGE[r.lage] || "–"];
-  const tabelle = (liste, titel, farbe, sp = SP, werteVon = standardWerte) => {
+  const tabelle = (liste, titel, farbe, sp = SP, werteVon = standardWerte, unter = "") => {
     if (doc.y > UNTEN - 60) neu();
     doc.text(`${titel} (${liste.length})`, RAND, doc.y, 12, { fett: true, farbe }); doc.y += 18;
+    if (unter) doc.y += doc.absatz(unter, RAND, doc.y, B, 9, { farbe: "#374151" }) + 6;
     if (!liste.length) { doc.text("–", RAND, doc.y, 10, { farbe: "#6b7280" }); doc.y += 18; return; }
     sp.forEach(([x, w, t]) => doc.text(t, RAND + x, doc.y, 8, { fett: true, farbe: "#6b7280" })); doc.y += 13;
     liste.forEach((e, i) => {
@@ -981,9 +988,9 @@ async function pdfErstellen(plan, stempel, fortschritt) {
   };
   for (const g of ERGEBNIS) if (plan[g.k].length || g.k !== "vielleicht") tabelle(plan[g.k], g.titel, g.farbe);
   // Zusaetzliche Standorte (anderes Modell): eigene Tabelle - getrennt, weil Tausch einen neuen Automaten kostet
-  if (plan.zusatz.length) tabelle(plan.zusatz, "Zusätzlich: guter Standort, anderes Automatenmodell – Automat tauschen", "#1d4ed8",
-    [[0, 34, "Nr."], [34, 130, "Kunde / Dulder"], [164, 100, "Ort"], [264, 104, "Jetziges Modell"], [368, 52, "Rechts frei"], [420, 95, "Ergebnis"]],
-    (k, r) => [k.nr, k.name, k.ort, k.modell || "–", r.rechtsCm ? r.rechtsCm + " cm" : "–", (ERGEBNIS.find(g => g.k === r.inFrage) || {}).klein || "–"]);
+  if (plan.zusatz.length) tabelle(plan.zusatz, ZUSATZ_TITEL, "#1d4ed8",
+    [[0, 34, "Nr."], [34, 130, "Kunde / Dulder"], [164, 100, "Ort"], [264, 104, "Jetziges Modell"], [368, 40, "Turnus"], [408, 107, "Bemerkung"]],
+    k => [k.nr, k.name, k.ort, k.modell || "–", k.turnus || "–", k.bemerkung || "–"], ZUSATZ_SATZ);
   if (plan.offen.length) {
     if (doc.y > UNTEN - 50) neu();
     doc.text(`Noch nicht besichtigt (${plan.offen.length})`, RAND, doc.y, 11, { fett: true, farbe: "#374151" }); doc.y += 16;
@@ -1046,6 +1053,22 @@ async function pdfErstellen(plan, stempel, fortschritt) {
     await bilderZeigen(mass, "");
     await bilderZeigen(mont, MONTAGE_TEXT);
   }
+  // ---- Tausch-Vorschlaege: alle Angaben auf einer eigenen Seite am Ende (keine Fotos, nicht besichtigt) ----
+  if (plan.zusatz.length) {
+    neu();
+    doc.text(ZUSATZ_TITEL, RAND, doc.y, 15, { fett: true, farbe: "#1d4ed8" }); doc.y += 22;
+    doc.y += doc.absatz(ZUSATZ_SATZ, RAND, doc.y, B, 9.5, { farbe: "#374151" }) + 14;
+    for (const { k } of plan.zusatz) {
+      if (doc.y > UNTEN - 110) neu();
+      doc.text(`${k.nr} · ${k.name}`, RAND, doc.y, 13, { fett: true }); doc.y += 19;
+      for (const [l, w] of [["Adresse", `${adresse(k)}, ${k.plz || ""} ${k.ort}`], ["Automat", (k.aut || "–") + (k.schl ? " · Schlüssel " + k.schl : "")],
+          ["Jetziges Modell", (k.modell || "–") + (k.turnus ? " · Turnus " + k.turnus : "")], ["Bemerkung", k.bemerkung || "–"]]) {
+        doc.text(l, RAND, doc.y + 1, 9, { farbe: "#6b7280" });
+        doc.y += Math.max(14, doc.absatz(w, RAND + 92, doc.y, B - 92, 10)) + 3;
+      }
+      doc.y += 6; doc.linie(RAND, doc.y, PDF_W - RAND, doc.y, "#e5e7eb"); doc.y += 12;
+    }
+  }
   // ---- Fusszeile: nur die Seitenzahl (der Name steht schon oben) ----
   doc.seiten.forEach((s, j) => {
     doc.s = s;
@@ -1073,7 +1096,7 @@ async function uebersichtTeilen() {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
   try {
     const plan = zipPlan(await medienAlle());
-    if (!bewertet(plan).length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Vielleicht/Nein“."); return; }
+    if (!bewertet(plan).length && !plan.zusatz.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Vielleicht/Nein“."); return; }
     const stempel = await stempelAlle(plan, (n, g) => zeige(`Fotos werden beschriftet … ${n} / ${g}`, 20000));
     const pdf = await pdfErstellen(plan, stempel, (n, g) => zeige(`PDF wird erstellt … Foto ${n} / ${g}`, 20000));
     const datei = new File([pdf], pdfName(), { type: "application/pdf" });
@@ -1088,7 +1111,7 @@ async function zipErstellen() {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
   try {
     const plan = zipPlan(await medienAlle());
-    if (!bewertet(plan).length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Vielleicht/Nein“ – die ZIP wäre leer."); return; }
+    if (!bewertet(plan).length && !plan.zusatz.length) { alert("Noch kein Standort mit „Kommt in Frage: Ja/Vielleicht/Nein“ – die ZIP wäre leer."); return; }
     const eintraege = [];
     const stempel = await stempelAlle(plan, (n, g) => zeige(`Fotos werden beschriftet … ${n} / ${g}`, 20000));
     const pdf = await pdfErstellen(plan, stempel, (n, g) => zeige(`PDF wird erstellt … Foto ${n} / ${g}`, 20000));
@@ -1200,13 +1223,13 @@ function pdfTexte(roh) {
   }
   return seiten;
 }
-const FELDER = ["Adresse", "Telefon", "Automat", "Typ / Anbau", "Jetziges Modell", "Vorschlag", "Rechts frei", "Lage", "Umfeld", "Kommt in Frage", "Notiz", "Besichtigt", "Vor Ort besichtigt"];
+const FELDER = ["Adresse", "Telefon", "Automat", "Typ / Anbau", "Jetziges Modell", "Vorschlag", "Bemerkung", "Rechts frei", "Lage", "Umfeld", "Kommt in Frage", "Notiz", "Besichtigt", "Vor Ort besichtigt"];
 function angabenAusPdf(roh) {   // -> [{nr, name, inFrage, felder: {Bezeichnung: Wert}}]
   const aus = [];
   for (const ops of pdfTexte(roh)) {
     let akt = null, feld = null;
     for (const o of ops) {
-      if (o.fett && o.gr === 18 && o.x === RAND && o.t.includes(" · ")) {   // Kundenseite: "W1 · Name"
+      if (o.fett && o.x === RAND && (o.gr === 18 && o.t.includes(" · ") || o.gr === 13 && /^Z\d+ · /.test(o.t))) {   // Kundenseite: "W1 · Name"
         const i = o.t.indexOf(" · "); akt = { nr: o.t.slice(0, i), name: o.t.slice(i + 3), felder: {} }; aus.push(akt); feld = null;
       } else if (!akt) continue;
       else if (o.fett && o.gr === 11 && ERGEBNIS.some(g => g.klein === o.t)) akt.inFrage = ERGEBNIS.find(g => g.klein === o.t).k;
@@ -1226,7 +1249,7 @@ function zusatzAusPdf(a) {
   const sh = links.match(/^(.*?)\s+(\S*\d\S*)$/), po = rechts.match(/^(\d{4,5})\s+(.*)$/);
   const au = f("Automat").split(" · Schlüssel "), mo = f("Jetziges Modell").split(" · Turnus ");
   return { name: a.name, strasse: sh ? sh[1] : links, hnr: sh ? sh[2] : "", plz: po ? po[1] : "", ort: po ? po[2] : rechts,
-    modell: mo[0] || "", turnus: mo[1] || "", aut: au[0] === "–" ? "" : (au[0] || ""), schl: au[1] || "" };
+    modell: mo[0] || "", turnus: mo[1] || "", aut: au[0] === "–" ? "" : (au[0] || ""), schl: au[1] || "", bemerkung: f("Bemerkung") };
 }
 function angabenAusSteckbrief(html) {
   const d = new DOMParser().parseFromString(html, "text/html"), felder = {}, merkmale = [];
@@ -1284,20 +1307,19 @@ async function zipEinlesen(datei) {
     const nachOrdner = {};   // Kundenordner -> Kunde ("W01 Name - Ort" ab 04.11., "W1 Name - Ort" davor)
     for (const k of kunden) { nachOrdner[ordnerName(k)] = k; nachOrdner[sauber(`${k.nr} ${k.name} - ${k.ort}`)] = k; }
     const funde = {}, fund = k => funde[k.id] = funde[k.id] || { k, r: null, fotos: [], gruppe: "" };
-    let fremd = 0;
+    let fremd = 0, zVorhanden = 0; const neueZ = [];
     for (const e of eintraege) {
       const teile = e.name.split("/"), dname = teile[teile.length - 1];
       if (/\.pdf$/i.test(dname)) {
         const roh = new TextDecoder("windows-1252").decode(await (await e.inhalt()).arrayBuffer());
         for (const a of angabenAusPdf(roh)) {
-          let k = kunden.find(x => x.nr === a.nr);
-          if (/^Z\d+$/.test(a.nr) && (!k || norm(k.name) !== norm(a.name))) {
-            // zusaetzlicher Standort: gleicher Name + Ort schon da -> den nehmen; sonst erst nach "OK" neu anlegen
+          if (/^Z\d+$/.test(a.nr)) {   // Tausch-Vorschlag: gleicher Name + Ort schon da -> bleibt; sonst nach "OK" anlegen
             const st = zusatzAusPdf(a);
-            k = zusatz.find(z => norm(z.name) === norm(st.name) && norm(z.ort) === norm(st.ort))
-              || { ...st, id: "zusatz-neu-" + a.nr, nr: a.nr, gruppe: "zusatz", neu: true };
-            nachOrdner[sauber(`${nrSortierbar(a.nr)} ${st.name} - ${st.ort}`)] = k;   // sein Fotoordner in der ZIP
+            if (zusatz.some(z => norm(z.name) === norm(st.name) && norm(z.ort) === norm(st.ort))) zVorhanden++;
+            else if (!neueZ.some(z => z.nr === a.nr)) neueZ.push({ ...st, nr: a.nr });
+            continue;
           }
+          const k = kunden.find(x => x.nr === a.nr);
           if (!k || norm(k.name) !== norm(a.name)) { fremd++; continue; }
           fund(k).r = ergebnisAus(a.felder, a.inFrage);
         }
@@ -1318,22 +1340,19 @@ async function zipEinlesen(datei) {
       if (art && /\.(jpe?g|png)$/i.test(dname)) f.fotos.push({ e, art, nr: +((dname.match(/(\d+)\.\w+$/) || [0, 0])[1]) });
     }
     const liste = Object.values(funde);
-    if (!liste.length) { alert("In dieser ZIP wurde kein Kunde aus der geladenen Liste gefunden."); return; }
+    if (!liste.length && !neueZ.length && !zVorhanden) { alert("In dieser ZIP wurde kein Kunde aus der geladenen Liste gefunden."); return; }
     const belegt = [];
     for (const f of liste) if (hatDaten(erg[f.k.id]) || (await medienVon(f.k.id)).length) belegt.push(f);
     const neu = liste.filter(f => !belegt.includes(f)), nFotos = neu.reduce((s, f) => s + f.fotos.length, 0);
-    const neueZ = neu.filter(f => f.k.neu).length;
-    const hinweis = (neueZ ? `\n\nDavon ${neueZ} zusätzliche(r) Standort(e), der/die neu angelegt wird/werden.` : "") + (belegt.length ? `\n\nSchon im Werkzeug, bleibt unverändert: ${belegt.map(f => f.k.nr).join(", ")}` : "")
+    const hinweis = (neueZ.length ? `\n\nDazu ${neueZ.length} Tausch-Vorschlag/-Vorschläge, der/die neu angelegt wird/werden: ${neueZ.map(z => z.nr).join(", ")}` : "")
+      + (zVorhanden ? `\n\n${zVorhanden} Tausch-Vorschlag/-Vorschläge gibt es schon – bleibt/bleiben unverändert.` : "") + (belegt.length ? `\n\nSchon im Werkzeug, bleibt unverändert: ${belegt.map(f => f.k.nr).join(", ")}` : "")
       + (fremd ? `\n\n${fremd} Eintrag/Einträge passen zu keinem Kunden der geladenen Liste und werden übergangen.` : "");
-    if (!neu.length) { alert("Alle Kunden aus dieser ZIP haben im Werkzeug schon Angaben – nichts überschrieben." + hinweis); return; }
+    if (!neu.length && !neueZ.length) { alert("Alle Kunden aus dieser ZIP haben im Werkzeug schon Angaben – nichts überschrieben." + hinweis); return; }
     if (!confirm(`In der ZIP gefunden: ${standorte(neu.length)} mit ${nFotos} Foto(s).${hinweis}\n\nJetzt ins Werkzeug übernehmen?`)) return;
+    for (const { nr, ...werte } of neueZ) zusatzAnlegen(werte, nrFrei(nr) ? nr : null);   // alte Nummer, wenn frei
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     let n = 0;
     for (const f of neu) {
-      if (f.k.neu) {   // zusaetzlichen Standort jetzt anlegen - alte Nummer, wenn frei, sonst die naechste
-        const { neu: _n, id: _i, nr, gruppe: _g, ...werte } = f.k;
-        f.k = zusatzAnlegen(werte, nrFrei(nr) ? nr : null);
-      }
       f.fotos.sort((a, b) => a.art === b.art ? a.nr - b.nr : a.art === "mass" ? -1 : 1);
       const t0 = Date.now();
       for (const [i, foto] of f.fotos.entries()) {
@@ -1349,7 +1368,7 @@ async function zipEinlesen(datei) {
     }
     Object.keys(cache).forEach(k => { (cache[k] || []).forEach(m => m.url && URL.revokeObjectURL(m.url)); delete cache[k]; });
     ui.ansicht = "liste"; ui.nurOffen = false; geschafft = true;
-    zeige(`${standorte(neu.length)} und ${nFotos} Foto(s) wiederhergestellt ✓`, 5000);
+    zeige(`${standorte(neu.length)} und ${nFotos} Foto(s) wiederhergestellt${neueZ.length ? ` · ${neueZ.length} Tausch-Vorschl.` : ""} ✓`, 5000);
   } catch (err) {
     alert("Die ZIP konnte nicht gelesen werden: " + (err && err.message || err));
   } finally {
@@ -1365,11 +1384,11 @@ function ansichtZusatz() {
   const neu = !ui.zusatzId, z = zusatz.find(x => x.id === ui.zusatzId) || {};
   return `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="zusatzab">‹ Zurück</button></div>
     <h1>${neu ? "Zusätzlicher Standort" : "Angaben ändern · " + esc(z.nr)}</h1>
-    <div class="unter">Guter Standort, anderes Automatenmodell – Vorschlag: Automat tauschen</div></div>
+    <div class="unter">Gut laufend, zentraler Standort, anderes Modell – Vorschlag: Automat tauschen</div></div>
   <main><div class="karte">
     ${ZUSATZ_FELDER.map(([f, t, pflicht]) => `<label class="feld" for="z_${f}">${t}${pflicht ? " *" : ""}</label>
       <input class="text" id="z_${f}" type="text" value="${esc(z[f] || "")}"${f === "plz" ? ' inputmode="numeric"' : ""} autocomplete="off">`).join("")}
-    <p class="klein">* Pflichtfeld. Gemessen wird wie bei allen: rechts frei 90–100 cm.</p></div>
+    <p class="klein">* Pflichtfeld. Kein Anfahren nötig – der Standort steht als Tausch-Vorschlag im PDF.</p></div>
     <button class="gross start" data-akt="zusatzok">${neu ? "Standort anlegen" : "Speichern"}</button>
     ${neu ? "" : `<button class="knopf2" data-akt="zusatzweg" style="margin-top:10px;color:var(--rot);border-color:#fca5a5">Standort löschen</button>`}
   </main>`;
@@ -1428,22 +1447,22 @@ function ansichtListe() {
   const inGruppe = k => ui.gruppe === "alle" || k.gruppe === ui.gruppe;
   const treffer = kunden.filter(k => {
     if (!inGruppe(k)) return false;
-    if (ui.nurOffen && erg[k.id] && erg[k.id].fertig) return false;
+    if (ui.nurOffen && (istZusatz(k) || (erg[k.id] && erg[k.id].fertig))) return false;   // Tausch-Vorschlag ist nie "offen"
     if (!q) return true;
     return norm([k.nr, k.name, k.name2, k.ort, k.strasse, k.aut, k.plz, k.modell].join(" ")).includes(q);
   });
-  const fertig = kunden.filter(k => erg[k.id] && erg[k.id].fertig).length;
-  const offenIn = g => kunden.filter(k => (g === "alle" || k.gruppe === g) && !(erg[k.id] && erg[k.id].fertig)).length;
-  const gchip = (g, t) => `<button class="chip ${ui.gruppe === g ? "an" : ""}" data-akt="gruppe" data-wert="${g}">${t} <span class="klein" style="color:inherit;opacity:.75">${offenIn(g)} offen</span></button>`;
+  const fertig = listenKunden.filter(k => erg[k.id] && erg[k.id].fertig).length;   // Tausch-Vorschlaege zaehlen nicht mit
+  const offenIn = g => listenKunden.filter(k => (g === "alle" || k.gruppe === g) && !(erg[k.id] && erg[k.id].fertig)).length;
+  const gchip = (g, t) => `<button class="chip ${ui.gruppe === g ? "an" : ""}" data-akt="gruppe" data-wert="${g}">${t} <span class="klein" style="color:inherit;opacity:.75">${g === "zusatz" ? zusatz.length + " Vorschl." : offenIn(g) + " offen"}</span></button>`;
   return `<div class="kopf"><div class="zeile"><div style="flex:1"><h1>Besichtigung</h1>
-      <div class="unter">${fertig} von ${kunden.length} erledigt</div></div>
+      <div class="unter">${fertig} von ${listenKunden.length} erledigt${zusatz.length ? ` · ${zusatz.length} Tausch-Vorschl.` : ""}</div></div>
       <button class="chip" data-akt="zip" style="background:transparent;color:#fff;border-color:#ffffff66">ZIP</button>
       <button class="chip" data-akt="mehr" style="background:transparent;color:#fff;border-color:#ffffff66">Mehr</button></div></div>
   <main>
     <div class="suche"><input id="suche" type="search" placeholder="Name, Ort, Straße, Aut-Nr. …" value="${esc(ui.suche)}" autocomplete="off"></div>
     ${hatGruppen ? `<div class="filter">${gchip("woche", "Diese Woche")}${gchip("samstag", "Samstag")}${gchip("zusatz", "Zusätzlich")}${gchip("alle", "Alle")}</div>` : ""}
     ${ui.gruppe === "zusatz" ? `<button class="gross start" data-akt="zusatzneu" style="margin-bottom:6px">＋ Standort hinzufügen</button>
-      <div class="klein" style="margin:0 2px 10px">Guter Standort, aber ein anderes Automatenmodell – Vorschlag an den Chef: Automat gegen Sielaff mit Anbau tauschen.</div>` : ""}
+      <div class="klein" style="margin:0 2px 10px">Gut laufender Automat an gutem, zentralem Standort, dort steht ein anderes Modell – Vorschlag an den Chef: gegen Sielaff mit Anbau tauschen. Ohne Besichtigung und Fotos; steht im PDF in einer eigenen Tabelle.</div>` : ""}
     <div class="filter"><button class="chip ${ui.nurOffen ? "an" : ""}" data-akt="nuroffen">Nur offene</button>
       <button class="chip" data-akt="sammeln" style="border-color:var(--blau2);color:var(--blau2);font-weight:650">📷 Fotos zuordnen</button></div>
     <div class="stand">${treffer.length} angezeigt · ${hatGruppen ? "W = diese Woche auf der Tour · 1, 2, 3 … = Samstagsroute · Z = zusätzlich" : "Nummer = Fahrreihenfolge"}</div>
@@ -1510,12 +1529,16 @@ function ansichtZip() {
       ${fehlt.length ? `<div class="fehlt" style="font-size:14px">Fehlt: ${fehlt.join(", ")}</div>` : ""}</button>`; };
   const groesse = bewertet(plan).reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
-    <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte${karteHolen() ? ", dann die <b>Tourenplan-Karte</b>" : ""}, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}<div class="klein" style="margin-top:4px"><b>„${esc(VOR_ORT)}“</b></div>${info.vermerk ? `<div class="klein" style="margin-top:4px">„${esc(info.vermerk)}“ steht dezent oben auf jeder Seite und klein unter dem Kundennamen auf jedem Foto.</div>` : ""}</div>
+    <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte${karteHolen() ? ", dann die <b>Tourenplan-Karte</b>" : ""}, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}<div class="klein" style="margin-top:4px"><b>„${esc(vorOrtSatz(plan))}“</b></div>${info.vermerk ? `<div class="klein" style="margin-top:4px">„${esc(info.vermerk)}“ steht dezent oben auf jeder Seite und klein unter dem Kundennamen auf jedem Foto.</div>` : ""}</div>
       <div class="klein" style="margin-top:6px">In der ZIP steht das PDF zuerst („1 ${esc(pdfName())}“)${karteHolen() ? `, dann „${KARTE_DATEI}“` : ""}, darunter der Ordner „${fotoOrdner()}“. ${standorte(bewertet(plan).length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
     <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
     <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur PDF teilen (eine Datei, z. B. für die Mail)</button>
     ${Object.entries(oberOrdner(plan)).map(([k, name]) =>
       `<div class="ordner">${esc(name)} (${plan[k].length})</div>${plan[k].map(x => karte(x, k)).join("") || `<p class="klein">–</p>`}`).join("")}
+    ${plan.zusatz.length ? `<div class="ordner">${esc(ZUSATZ_TITEL)} (${plan.zusatz.length}) – nur im PDF, ohne Fotos</div>
+      ${plan.zusatz.map(({ k }) => `<button class="karte" data-akt="oeffnen" data-id="${esc(k.id)}" style="width:100%;text-align:left;font:inherit;color:inherit">
+        <div class="titel">${esc(k.nr)} · ${esc(k.name)} – ${esc(k.ort)}</div>
+        <div class="klein">Jetzt: ${esc(k.modell)}${k.turnus ? " · " + esc(k.turnus) : ""}${k.bemerkung ? " · " + esc(k.bemerkung) : ""}</div></button>`).join("")}` : ""}
   </main>`;
 }
 
@@ -1525,11 +1548,12 @@ function kopfKunde(k) {
     <h1>${esc(k.name)}</h1></div>`;
 }
 function datenKarte(k) {
-  if (istZusatz(k)) return `<div class="karte"><h2>${esc(k.name)}</h2><div class="z2">Zusätzlicher Standort · Vorschlag: Automat tauschen</div>
+  if (istZusatz(k)) return `<div class="karte"><h2>${esc(k.name)}</h2><div class="z2">Tausch-Vorschlag · gegen Sielaff mit Anbau</div>
     <dl class="daten">
       <dt>Adresse</dt><dd>${esc(adresse(k))}<br>${esc(k.plz || "")} ${esc(k.ort)}</dd>
       <dt>Aut-Nr.</dt><dd>${esc(k.aut || "–")}${k.schl ? " · Schl. " + esc(k.schl) : ""}</dd>
       <dt>Jetzt</dt><dd>${esc(k.modell)}${k.turnus ? " · " + esc(k.turnus) : ""}</dd>
+      ${k.bemerkung ? `<dt>Bemerkung</dt><dd>${esc(k.bemerkung)}</dd>` : ""}
     </dl><button class="knopf2" data-akt="zusatzaendern">Angaben ändern</button></div>`;
   const tel = k.tel ? `<a href="tel:${esc(k.tel.replace(/[^0-9+]/g, ""))}">${esc(k.tel)}</a>` : "–";
   return `<div class="karte"><h2>${esc(k.name)}</h2>${k.name2 ? `<div class="z2">${esc(k.name2)}</div>` : ""}
@@ -1567,6 +1591,9 @@ function knoepfe(art, haupt, zweit) {
 
 function ansichtKunde() {
   const k = kunden.find(x => x.id === ui.id); if (!k) { ui.ansicht = "liste"; return ansichtListe(); }
+  if (istZusatz(k)) return `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="liste">‹ Liste</button>
+      <div style="flex:1;text-align:right" class="unter">Nr. ${esc(k.nr)} · Tausch-Vorschlag</div></div><h1>${esc(k.name)}</h1></div>
+    <main>${datenKarte(k)}<div class="hinweis">Kein Anfahren nötig. Steht im PDF unter „${esc(ZUSATZ_TITEL)}“ – ohne Fotos und Maß.</div></main>`;
   const r = e(k.id); const s = ui.schritt; let inhalt = "";
   const n = art => anzahl(k.id, art);
   if (s === 0) {
