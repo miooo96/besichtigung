@@ -137,7 +137,7 @@ const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
 // Tourenplan-Karte aus der Kundenliste (eigener Schluessel: gross, und darf das Laden der Liste nie verhindern)
 const K_KARTE = "bes.karte";
 // Fassung des Programms - gleiche Nummer wie CACHE in sw.js; steht unter "Mehr"
-const FASSUNG = "25";
+const FASSUNG = "26";
 /* Mirko 04.11.2026: "koennen wir nicht einen Knopf aktualisieren einbauen, der neu laedt - bei mir klappt es
    mit neu laden in der App nicht". Loescht NUR den Programm-Zwischenspeicher (Cache Storage) - Angaben
    (localStorage) und Fotos (IndexedDB) bleiben unberuehrt - und holt die Seite frisch vom Server. */
@@ -155,7 +155,31 @@ async function aktualisieren() {
 const karteHolen = () => lesen(K_KARTE, null);
 const lesen = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const schreiben = (k, v) => localStorage.setItem(k, JSON.stringify(v));
-let kunden = lesen(K_KUNDEN, []);
+/* Zusaetzliche Standorte (Mirko 05.11.2026: "manuell einen Kunden einpflegen, der einen guten Standort haette,
+   aber ein anderes Automatenmodell dort steht" -> Vorschlag Automat tauschen). Eigener Speicher, damit
+   "Neue Kundenliste laden" sie nie mitnimmt ("aktuelle Daten duerfen nicht ueberschrieben werden").
+   Zur Laufzeit haengen sie hinten an die Kundenliste - so gelten Schritte, Fotos, Zuordnung und Zuruecksetzen. */
+const K_ZUSATZ = "bes.zusatz", K_ZUSATZ_N = "bes.zusatz.n";
+let listenKunden = lesen(K_KUNDEN, []);
+let zusatz = lesen(K_ZUSATZ, []);
+let kunden = [];
+function kundenNeu() { kunden = [...listenKunden, ...zusatz]; }
+kundenNeu();
+const ZUSATZ_FELDER = [["name", "Name / Dulder", true], ["strasse", "Straße", false], ["hnr", "Hausnummer", false],
+  ["plz", "PLZ", false], ["ort", "Ort", true], ["modell", "Jetziges Automatenmodell", true],
+  ["aut", "Automatennummer", false], ["schl", "Schlüsselnummer", false], ["turnus", "Turnus", false]];
+const ZUSATZ_TITEL = "Zusätzlich – Automat tauschen";
+const istZusatz = k => !!k && k.gruppe === "zusatz";
+const nrFrei = nr => !zusatz.some(z => z.nr === nr);
+function zusatzSichern() { schreiben(K_ZUSATZ, zusatz); kundenNeu(); }
+// Neue Nummer Z1, Z2 ... (Zaehler, damit eine geloeschte Nummer nicht neu vergeben wird); beim Wiederherstellen die alte
+function zusatzAnlegen(werte, nr) {
+  const zaehler = +(localStorage.getItem(K_ZUSATZ_N) || 0);
+  const n = nr ? +nr.slice(1) : Math.max(zaehler, ...zusatz.map(z => +z.nr.slice(1) || 0)) + 1;
+  localStorage.setItem(K_ZUSATZ_N, String(Math.max(zaehler, n)));
+  const z = { id: "zusatz-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6), nr: "Z" + n, gruppe: "zusatz", ...werte };
+  zusatz.push(z); zusatzSichern(); return z;
+}
 let erg = lesen(K_ERG, {});
 let info = lesen(K_INFO, {});
 // Gruppen (Mirko 03.11.2026): "woche" = diese Woche auf der normalen Tour (Nr. W1 ...),
@@ -281,7 +305,7 @@ document.getElementById("datei").addEventListener("change", ev => {
       const d = JSON.parse(r.result);
       const liste = Array.isArray(d) ? d : d.kunden;
       if (!Array.isArray(liste) || !liste.length || !liste.every(k => k.id && k.name)) throw new Error("Format");
-      kunden = liste; schreiben(K_KUNDEN, kunden);
+      listenKunden = liste; schreiben(K_KUNDEN, listenKunden); kundenNeu();   // zusaetzliche Standorte bleiben
       info.importiert = jetzt(); info.quelle = f.name; info.stand = d.stand || "";
       info.titel = d.titel || "Standort-Besichtigung"; info.auswahl = d.auswahl || "";
       info.vermerk = d.vermerk || "";   // z. B. wer es ausgearbeitet hat - steht in der Datei, nicht im Programm
@@ -588,11 +612,12 @@ async function zipBauen(eintraege, fortschritt) {   // eintraege: [{name, blob}]
 const sauber = s => String(s || "").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
 function zipPlan(medienListe) {
   const proKunde = {}; medienListe.forEach(m => (proKunde[m.kunde] = proKunde[m.kunde] || []).push(m));
-  const plan = { ja: [], vielleicht: [], nein: [], offen: [] };
+  const plan = { ja: [], vielleicht: [], nein: [], zusatz: [], offen: [] };
   for (const k of kunden) {
     const r = erg[k.id] || {};
     const m = (proKunde[k.id] || []).filter(x => ZIP_ARTEN.includes(x.art)).sort((a, b) => a.zeit.localeCompare(b.zeit));
-    (plan[ERGEBNIS.some(g => g.k === r.inFrage) ? r.inFrage : "offen"]).push({ k, r, medien: m });
+    const bew = ERGEBNIS.some(g => g.k === r.inFrage);   // Zusaetzliche: eigene Gruppe, Ergebnis bleibt r.inFrage
+    (plan[!bew ? "offen" : istZusatz(k) ? "zusatz" : r.inFrage]).push({ k, r, medien: m });
   }
   return plan;
 }
@@ -603,11 +628,12 @@ const ERGEBNIS = [
   { k: "ja", titel: "Kommt in Frage", klein: "kommt in Frage", farbe: "#047857" },
   { k: "vielleicht", titel: "Kommt vielleicht in Frage", klein: "kommt vielleicht in Frage", farbe: "#a16207" },
   { k: "nein", titel: "Kommt nicht in Frage", klein: "kommt nicht in Frage", farbe: "#b91c1c" }];
-const bewertet = plan => ERGEBNIS.flatMap(g => plan[g.k]);
+const bewertet = plan => [...ERGEBNIS.flatMap(g => plan[g.k]), ...(plan.zusatz || [])];
 // Ordner in der ZIP, durchnummeriert nur ueber die Gruppen, die es gibt ("1 Kommt in Frage", "2 Kommt nicht in Frage" ...)
 function oberOrdner(plan) {
   const aus = {}; let n = 0;
   for (const g of ERGEBNIS) if (plan[g.k].length || g.k !== "vielleicht") aus[g.k] = `${++n} ${g.titel}`;
+  if ((plan.zusatz || []).length) aus.zusatz = `${++n} ${ZUSATZ_TITEL}`;
   return aus;
 }
 // alte Steckbrief-ZIP (03.11.) und Test: feste Namen der beiden Ordner von damals
@@ -926,7 +952,7 @@ async function pdfErstellen(plan, stempel, fortschritt) {
   // ---- Seite 1: Uebersicht ----
   neu();
   doc.text(info.titel || "Standort-Besichtigung", RAND, doc.y, 20, { fett: true }); doc.y += 30;
-  doc.text(`Stand ${new Date().toLocaleDateString("de-DE")} · ${standorte(alle.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage${plan.vielleicht.length ? ` · ${plan.vielleicht.length} vielleicht` : ""} · ${plan.nein.length} nicht`, RAND, doc.y, 10, { farbe: "#374151" });
+  doc.text(`Stand ${new Date().toLocaleDateString("de-DE")} · ${standorte(alle.length)} besichtigt · ${plan.ja.length} ${plan.ja.length === 1 ? "kommt" : "kommen"} in Frage${plan.vielleicht.length ? ` · ${plan.vielleicht.length} vielleicht` : ""} · ${plan.nein.length} nicht${plan.zusatz.length ? ` · ${plan.zusatz.length} zusätzlich (Automat tauschen)` : ""}`, RAND, doc.y, 10, { farbe: "#374151" });
   doc.y += 15;
   const zr = zeitraum(plan); if (zr) { doc.text(zr, RAND, doc.y, 10, { farbe: "#374151" }); doc.y += 15; }
   if (info.auswahl) {
@@ -938,22 +964,26 @@ async function pdfErstellen(plan, stempel, fortschritt) {
   doc.text("Benötigt werden rechts neben dem Automaten 90–100 cm. Je Standort folgt eine Seite mit allen Angaben und Fotos.", RAND, doc.y, 9, { farbe: "#6b7280" });
   doc.y += 20;
   const SP = [[0, 34, "Nr."], [34, 160, "Kunde / Dulder"], [194, 112, "Ort"], [306, 62, "Rechts frei"], [368, 40, "reicht"], [408, 107, "Lage"]];
-  const tabelle = (liste, titel, farbe) => {
+  const standardWerte = (k, r) => [k.nr, k.name, k.ort, r.rechtsCm ? r.rechtsCm + " cm" : "–", r.rechtsFrei || "–", LAGE[r.lage] || "–"];
+  const tabelle = (liste, titel, farbe, sp = SP, werteVon = standardWerte) => {
     if (doc.y > UNTEN - 60) neu();
     doc.text(`${titel} (${liste.length})`, RAND, doc.y, 12, { fett: true, farbe }); doc.y += 18;
     if (!liste.length) { doc.text("–", RAND, doc.y, 10, { farbe: "#6b7280" }); doc.y += 18; return; }
-    SP.forEach(([x, w, t]) => doc.text(t, RAND + x, doc.y, 8, { fett: true, farbe: "#6b7280" })); doc.y += 13;
+    sp.forEach(([x, w, t]) => doc.text(t, RAND + x, doc.y, 8, { fett: true, farbe: "#6b7280" })); doc.y += 13;
     liste.forEach((e, i) => {
-      if (doc.y > UNTEN - 16) { neu(); SP.forEach(([x, w, t]) => doc.text(t, RAND + x, doc.y, 8, { fett: true, farbe: "#6b7280" })); doc.y += 13; }
+      if (doc.y > UNTEN - 16) { neu(); sp.forEach(([x, w, t]) => doc.text(t, RAND + x, doc.y, 8, { fett: true, farbe: "#6b7280" })); doc.y += 13; }
       if (i % 2 === 0) doc.rechteck(RAND - 4, doc.y - 3, B + 8, 15, "#f3f4f6");
-      const k = e.k, r = e.r;
-      const werte = [k.nr, k.name, k.ort, r.rechtsCm ? r.rechtsCm + " cm" : "–", r.rechtsFrei || "–", LAGE[r.lage] || "–"];
-      SP.forEach(([x, w], j) => doc.text(kuerzen(werte[j], w - 6, 9, j === 1), RAND + x, doc.y, 9, { fett: j === 1 }));
+      const werte = werteVon(e.k, e.r);
+      sp.forEach(([x, w], j) => doc.text(kuerzen(werte[j], w - 6, 9, j === 1), RAND + x, doc.y, 9, { fett: j === 1 }));
       doc.y += 15;
     });
     doc.y += 12;
   };
   for (const g of ERGEBNIS) if (plan[g.k].length || g.k !== "vielleicht") tabelle(plan[g.k], g.titel, g.farbe);
+  // Zusaetzliche Standorte (anderes Modell): eigene Tabelle - getrennt, weil Tausch einen neuen Automaten kostet
+  if (plan.zusatz.length) tabelle(plan.zusatz, "Zusätzlich: guter Standort, anderes Automatenmodell – Automat tauschen", "#1d4ed8",
+    [[0, 34, "Nr."], [34, 130, "Kunde / Dulder"], [164, 100, "Ort"], [264, 104, "Jetziges Modell"], [368, 52, "Rechts frei"], [420, 95, "Ergebnis"]],
+    (k, r) => [k.nr, k.name, k.ort, k.modell || "–", r.rechtsCm ? r.rechtsCm + " cm" : "–", (ERGEBNIS.find(g => g.k === r.inFrage) || {}).klein || "–"]);
   if (plan.offen.length) {
     if (doc.y > UNTEN - 50) neu();
     doc.text(`Noch nicht besichtigt (${plan.offen.length})`, RAND, doc.y, 11, { fett: true, farbe: "#374151" }); doc.y += 16;
@@ -980,9 +1010,12 @@ async function pdfErstellen(plan, stempel, fortschritt) {
     if (k.name2) { doc.text(k.name2, RAND, doc.y, 11, { farbe: "#6b7280" }); doc.y += 16; }
     doc.y += 4;
     const zeilen = [
-      ["Adresse", `${adresse(k)}, ${k.plz} ${k.ort}`], ["Telefon", k.tel || "–"],
+      ["Adresse", `${adresse(k)}, ${k.plz || ""} ${k.ort}`], ...(istZusatz(k) ? [] : [["Telefon", k.tel || "–"]]),
       ["Automat", (k.aut || "–") + (k.schl ? " · Schlüssel " + k.schl : "")],
-      ["Typ / Anbau", `${k.typ || "–"} · ${scText(k.sc)} · Turnus ${k.turnus || "–"}`],
+      ...(istZusatz(k)   // zusaetzlicher Standort: anderes Modell -> Vorschlag Tausch (Mirko 05.11.2026)
+        ? [["Jetziges Modell", (k.modell || "–") + (k.turnus ? " · Turnus " + k.turnus : ""), true],
+           ["Vorschlag", "Automat gegen Sielaff mit Anbau tauschen", true]]
+        : [["Typ / Anbau", `${k.typ || "–"} · ${scText(k.sc)} · Turnus ${k.turnus || "–"}`]]),
       ["Rechts frei", (r.rechtsCm ? r.rechtsCm + " cm" : "–") + (r.rechtsFrei ? " · 90–100 cm reichen: " + r.rechtsFrei : ""), true],
       ["Lage", LAGE[r.lage] || "–"], ["Umfeld", umfeldText(r) || "–"], ["Notiz", r.notiz || "–"],
       ["Vor Ort besichtigt", besuchsTage(r).join(", ") || "–"]];
@@ -1070,8 +1103,8 @@ async function zipErstellen() {
         [0x8298, info.autor ? `(c) ${info.autor} - ${info.titel || ""}` : ""]]) });
     }
     const ober = oberOrdner(plan);
-    for (const g of ERGEBNIS) for (const x of plan[g.k]) {
-      const basis = `${fotoOrdner()}/${ober[g.k]}/${ordnerName(x.k)}/`;
+    for (const [gk, ordner] of Object.entries(ober)) for (const x of plan[gk]) {   // ja, vielleicht, nein, zusatz
+      const basis = `${fotoOrdner()}/${ordner}/${ordnerName(x.k)}/`;
       const namen = dateiNamen(x.medien);
       x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: stempel.get(m.id) || m.blob }));   // beschriftete Fassung
     }
@@ -1090,7 +1123,7 @@ const hatDaten = r => r && (r.besuche && r.besuche.length || r.fertig || r.recht
 async function allesZuruecksetzen() {
   const nKunden = Object.values(erg).filter(hatDaten).length;
   const nFotos = await tx("readonly", s => req(s.count()));
-  if (!confirm(`Wirklich bei null anfangen?\n\nGelöscht werden die Angaben von ${nKunden} Kunden und ${nFotos} Foto(s) im Werkzeug.\nDie Kundenliste bleibt.`)) return;
+  if (!confirm(`Wirklich bei null anfangen?\n\nGelöscht werden die Angaben von ${nKunden} Kunden und ${nFotos} Foto(s) im Werkzeug.\nDie Kundenliste und die zusätzlichen Standorte bleiben.`)) return;
   if (!confirm("Ganz sicher? Das lässt sich nicht rückgängig machen.\n\nSind schon echte Daten dabei: vorher die ZIP sichern.")) return;
   erg = {}; schreiben(K_ERG, erg);
   await tx("readwrite", s => req(s.clear()));
@@ -1167,7 +1200,7 @@ function pdfTexte(roh) {
   }
   return seiten;
 }
-const FELDER = ["Adresse", "Telefon", "Automat", "Typ / Anbau", "Rechts frei", "Lage", "Umfeld", "Kommt in Frage", "Notiz", "Besichtigt", "Vor Ort besichtigt"];
+const FELDER = ["Adresse", "Telefon", "Automat", "Typ / Anbau", "Jetziges Modell", "Vorschlag", "Rechts frei", "Lage", "Umfeld", "Kommt in Frage", "Notiz", "Besichtigt", "Vor Ort besichtigt"];
 function angabenAusPdf(roh) {   // -> [{nr, name, inFrage, felder: {Bezeichnung: Wert}}]
   const aus = [];
   for (const ops of pdfTexte(roh)) {
@@ -1183,6 +1216,17 @@ function angabenAusPdf(roh) {   // -> [{nr, name, inFrage, felder: {Bezeichnung:
     }
   }
   return aus;
+}
+// Stammdaten eines zusaetzlichen Standorts aus seiner PDF-Seite (Adresse "Str. 5, 35415 Ort", Automat
+// "A123 · Schlüssel 9", Jetziges Modell "Modell · Turnus 2W")
+function zusatzAusPdf(a) {
+  const f = x => { const v = String(a.felder[x] || "").trim(); return v === "–" ? "" : v; };
+  const adr = f("Adresse"), komma = adr.lastIndexOf(",");
+  const links = komma >= 0 ? adr.slice(0, komma).trim() : "", rechts = (komma >= 0 ? adr.slice(komma + 1) : adr).trim();
+  const sh = links.match(/^(.*?)\s+(\S*\d\S*)$/), po = rechts.match(/^(\d{4,5})\s+(.*)$/);
+  const au = f("Automat").split(" · Schlüssel "), mo = f("Jetziges Modell").split(" · Turnus ");
+  return { name: a.name, strasse: sh ? sh[1] : links, hnr: sh ? sh[2] : "", plz: po ? po[1] : "", ort: po ? po[2] : rechts,
+    modell: mo[0] || "", turnus: mo[1] || "", aut: au[0] === "–" ? "" : (au[0] || ""), schl: au[1] || "" };
 }
 function angabenAusSteckbrief(html) {
   const d = new DOMParser().parseFromString(html, "text/html"), felder = {}, merkmale = [];
@@ -1235,6 +1279,8 @@ async function zipEinlesen(datei) {
   let geschafft = false;
   try {
     const eintraege = await zipLesen(datei);
+    // PDF zuerst: es meldet auch zusaetzliche Standorte an, deren Fotoordner danach zugeordnet werden
+    eintraege.sort((a, b) => (/\.pdf$/i.test(b.name) ? 1 : 0) - (/\.pdf$/i.test(a.name) ? 1 : 0));
     const nachOrdner = {};   // Kundenordner -> Kunde ("W01 Name - Ort" ab 04.11., "W1 Name - Ort" davor)
     for (const k of kunden) { nachOrdner[ordnerName(k)] = k; nachOrdner[sauber(`${k.nr} ${k.name} - ${k.ort}`)] = k; }
     const funde = {}, fund = k => funde[k.id] = funde[k.id] || { k, r: null, fotos: [], gruppe: "" };
@@ -1244,7 +1290,14 @@ async function zipEinlesen(datei) {
       if (/\.pdf$/i.test(dname)) {
         const roh = new TextDecoder("windows-1252").decode(await (await e.inhalt()).arrayBuffer());
         for (const a of angabenAusPdf(roh)) {
-          const k = kunden.find(x => x.nr === a.nr);
+          let k = kunden.find(x => x.nr === a.nr);
+          if (/^Z\d+$/.test(a.nr) && (!k || norm(k.name) !== norm(a.name))) {
+            // zusaetzlicher Standort: gleicher Name + Ort schon da -> den nehmen; sonst erst nach "OK" neu anlegen
+            const st = zusatzAusPdf(a);
+            k = zusatz.find(z => norm(z.name) === norm(st.name) && norm(z.ort) === norm(st.ort))
+              || { ...st, id: "zusatz-neu-" + a.nr, nr: a.nr, gruppe: "zusatz", neu: true };
+            nachOrdner[sauber(`${nrSortierbar(a.nr)} ${st.name} - ${st.ort}`)] = k;   // sein Fotoordner in der ZIP
+          }
           if (!k || norm(k.name) !== norm(a.name)) { fremd++; continue; }
           fund(k).r = ergebnisAus(a.felder, a.inFrage);
         }
@@ -1269,13 +1322,18 @@ async function zipEinlesen(datei) {
     const belegt = [];
     for (const f of liste) if (hatDaten(erg[f.k.id]) || (await medienVon(f.k.id)).length) belegt.push(f);
     const neu = liste.filter(f => !belegt.includes(f)), nFotos = neu.reduce((s, f) => s + f.fotos.length, 0);
-    const hinweis = (belegt.length ? `\n\nSchon im Werkzeug, bleibt unverändert: ${belegt.map(f => f.k.nr).join(", ")}` : "")
+    const neueZ = neu.filter(f => f.k.neu).length;
+    const hinweis = (neueZ ? `\n\nDavon ${neueZ} zusätzliche(r) Standort(e), der/die neu angelegt wird/werden.` : "") + (belegt.length ? `\n\nSchon im Werkzeug, bleibt unverändert: ${belegt.map(f => f.k.nr).join(", ")}` : "")
       + (fremd ? `\n\n${fremd} Eintrag/Einträge passen zu keinem Kunden der geladenen Liste und werden übergangen.` : "");
     if (!neu.length) { alert("Alle Kunden aus dieser ZIP haben im Werkzeug schon Angaben – nichts überschrieben." + hinweis); return; }
     if (!confirm(`In der ZIP gefunden: ${standorte(neu.length)} mit ${nFotos} Foto(s).${hinweis}\n\nJetzt ins Werkzeug übernehmen?`)) return;
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     let n = 0;
     for (const f of neu) {
+      if (f.k.neu) {   // zusaetzlichen Standort jetzt anlegen - alte Nummer, wenn frei, sonst die naechste
+        const { neu: _n, id: _i, nr, gruppe: _g, ...werte } = f.k;
+        f.k = zusatzAnlegen(werte, nrFrei(nr) ? nr : null);
+      }
       f.fotos.sort((a, b) => a.art === b.art ? a.nr - b.nr : a.art === "mass" ? -1 : 1);
       const t0 = Date.now();
       for (const [i, foto] of f.fotos.entries()) {
@@ -1302,9 +1360,46 @@ async function zipEinlesen(datei) {
 document.getElementById("wahlZip").addEventListener("change", ev => { const f = ev.target.files[0]; ev.target.value = ""; zipEinlesen(f); });
 
 /* ================= Ansichten ================= */
+/* ================= Zusaetzlicher Standort: anlegen / aendern / loeschen ================= */
+function ansichtZusatz() {
+  const neu = !ui.zusatzId, z = zusatz.find(x => x.id === ui.zusatzId) || {};
+  return `<div class="kopf"><div class="zeile"><button class="zurueck" data-akt="zusatzab">‹ Zurück</button></div>
+    <h1>${neu ? "Zusätzlicher Standort" : "Angaben ändern · " + esc(z.nr)}</h1>
+    <div class="unter">Guter Standort, anderes Automatenmodell – Vorschlag: Automat tauschen</div></div>
+  <main><div class="karte">
+    ${ZUSATZ_FELDER.map(([f, t, pflicht]) => `<label class="feld" for="z_${f}">${t}${pflicht ? " *" : ""}</label>
+      <input class="text" id="z_${f}" type="text" value="${esc(z[f] || "")}"${f === "plz" ? ' inputmode="numeric"' : ""} autocomplete="off">`).join("")}
+    <p class="klein">* Pflichtfeld. Gemessen wird wie bei allen: rechts frei 90–100 cm.</p></div>
+    <button class="gross start" data-akt="zusatzok">${neu ? "Standort anlegen" : "Speichern"}</button>
+    ${neu ? "" : `<button class="knopf2" data-akt="zusatzweg" style="margin-top:10px;color:var(--rot);border-color:#fca5a5">Standort löschen</button>`}
+  </main>`;
+}
+async function zusatzSpeichern() {
+  const werte = {};
+  for (const [f] of ZUSATZ_FELDER) werte[f] = (document.getElementById("z_" + f).value || "").trim();
+  const fehlt = ZUSATZ_FELDER.filter(([f, , pflicht]) => pflicht && !werte[f]).map(([, t]) => t);
+  if (fehlt.length) { alert("Bitte noch ausfüllen: " + fehlt.join(", ")); return; }
+  let z = zusatz.find(x => x.id === ui.zusatzId);
+  if (z) { Object.assign(z, werte); zusatzSichern(); zeige("Gespeichert ✓"); }
+  else { z = zusatzAnlegen(werte); ui.schritt = 0; zeige(`${z.nr} angelegt ✓`); }
+  ui.zusatzId = null; ui.id = z.id; ui.ansicht = "kunde";
+  await ladeMedien(z.id); zeichnen(); window.scrollTo(0, 0);
+}
+async function zusatzLoeschen() {
+  const z = zusatz.find(x => x.id === ui.zusatzId); if (!z) return;
+  const ids = (await medienVon(z.id)).map(m => m.id);
+  if (!confirm(`Standort ${z.nr} „${z.name}“ löschen?\n\nSeine Angaben und ${ids.length} Foto(s) werden mit gelöscht.`)) return;
+  await tx("readwrite", s => Promise.all(ids.map(id => req(s.delete(id)))));
+  delete erg[z.id]; schreiben(K_ERG, erg);
+  zusatz = zusatz.filter(x => x.id !== z.id); zusatzSichern();
+  ui.zusatzId = null; ui.id = null; ui.ansicht = "liste";
+  zeige(`${z.nr} gelöscht.`); zeichnen();
+}
+
 function zeichnen() {
   const app = document.getElementById("app");
   if (!kunden.length) return app.innerHTML = ansichtLeer();
+  if (ui.ansicht === "zusatz") return app.innerHTML = ansichtZusatz();
   if (ui.ansicht === "kunde") return app.innerHTML = ansichtKunde();
   if (ui.ansicht === "mehr") return app.innerHTML = ansichtMehr();
   if (ui.ansicht === "zip") return app.innerHTML = ansichtZip();
@@ -1335,7 +1430,7 @@ function ansichtListe() {
     if (!inGruppe(k)) return false;
     if (ui.nurOffen && erg[k.id] && erg[k.id].fertig) return false;
     if (!q) return true;
-    return norm([k.nr, k.name, k.name2, k.ort, k.strasse, k.aut, k.plz].join(" ")).includes(q);
+    return norm([k.nr, k.name, k.name2, k.ort, k.strasse, k.aut, k.plz, k.modell].join(" ")).includes(q);
   });
   const fertig = kunden.filter(k => erg[k.id] && erg[k.id].fertig).length;
   const offenIn = g => kunden.filter(k => (g === "alle" || k.gruppe === g) && !(erg[k.id] && erg[k.id].fertig)).length;
@@ -1346,16 +1441,18 @@ function ansichtListe() {
       <button class="chip" data-akt="mehr" style="background:transparent;color:#fff;border-color:#ffffff66">Mehr</button></div></div>
   <main>
     <div class="suche"><input id="suche" type="search" placeholder="Name, Ort, Straße, Aut-Nr. …" value="${esc(ui.suche)}" autocomplete="off"></div>
-    ${hatGruppen ? `<div class="filter">${gchip("woche", "Diese Woche")}${gchip("samstag", "Samstag")}${gchip("alle", "Alle")}</div>` : ""}
+    ${hatGruppen ? `<div class="filter">${gchip("woche", "Diese Woche")}${gchip("samstag", "Samstag")}${gchip("zusatz", "Zusätzlich")}${gchip("alle", "Alle")}</div>` : ""}
+    ${ui.gruppe === "zusatz" ? `<button class="gross start" data-akt="zusatzneu" style="margin-bottom:6px">＋ Standort hinzufügen</button>
+      <div class="klein" style="margin:0 2px 10px">Guter Standort, aber ein anderes Automatenmodell – Vorschlag an den Chef: Automat gegen Sielaff mit Anbau tauschen.</div>` : ""}
     <div class="filter"><button class="chip ${ui.nurOffen ? "an" : ""}" data-akt="nuroffen">Nur offene</button>
       <button class="chip" data-akt="sammeln" style="border-color:var(--blau2);color:var(--blau2);font-weight:650">📷 Fotos zuordnen</button></div>
-    <div class="stand">${treffer.length} angezeigt · ${hatGruppen ? "W = diese Woche auf der Tour · 1, 2, 3 … = Samstagsroute" : "Nummer = Fahrreihenfolge"}</div>
+    <div class="stand">${treffer.length} angezeigt · ${hatGruppen ? "W = diese Woche auf der Tour · 1, 2, 3 … = Samstagsroute · Z = zusätzlich" : "Nummer = Fahrreihenfolge"}</div>
     ${treffer.map(k => { const s = status(k.id); return `
       <button class="kunde" data-akt="oeffnen" data-id="${esc(k.id)}">
         <div class="nr">${esc(k.nr)}</div>
         <div class="mitte"><div class="name">${esc(k.name)}</div>
           <div class="ort">${esc(adresse(k))} · ${esc(k.ort)}</div>
-          <div style="margin-top:4px"><span class="sc ${scKlasse(k.sc)}">${esc(scText(k.sc))}</span></div></div>
+          <div style="margin-top:4px">${istZusatz(k) ? `<span class="sc sx">Tausch · ${esc(k.modell)}</span>` : `<span class="sc ${scKlasse(k.sc)}">${esc(scText(k.sc))}</span>`}</div></div>
         <div class="status ${s.k}">${s.t}</div></button>`; }).join("")}
   </main>`;
 }
@@ -1384,7 +1481,7 @@ function ansichtMehr() {
         <li>Oben auf den Namen tippen → <b>Umbenennen</b> → genau: <b>${KURZBEFEHL}</b> → Fertig</li>
       </ol>
       <a class="knopf2" href="${MASSBAND_LINK}" style="display:block;text-align:center;text-decoration:none">Jetzt ausprobieren</a></div>
-    <div class="karte"><b>Bei null anfangen</b><p class="klein">Löscht alle Angaben und Fotos im Werkzeug, z. B. nach dem Testen. Die Kundenliste bleibt. Einzelne Kunden lassen sich im Kunden unter Schritt 1 zurücksetzen.</p>
+    <div class="karte"><b>Bei null anfangen</b><p class="klein">Löscht alle Angaben und Fotos im Werkzeug, z. B. nach dem Testen. Die Kundenliste und die zusätzlichen Standorte bleiben. Einzelne Kunden lassen sich im Kunden unter Schritt 1 zurücksetzen.</p>
       <button class="knopf2" data-akt="allesweg" style="color:var(--rot);border-color:#fca5a5">Alles zurücksetzen</button></div>
     <div class="karte"><b>So geht’s</b><p class="klein">Kunde antippen → „Ich bin da“ → „📏 Maßband öffnen“ → messen, Auslöser drücken, Bild in Fotos sichern → zurück zur Besichtigung → „Maßband-Foto hinzufügen“ → Zahl eintragen → kommt in Frage? → „Fertig“. Immer über das Symbol auf dem Home-Bildschirm öffnen – dort liegen Ihre Daten.</p></div>
   </main>`;
@@ -1428,6 +1525,12 @@ function kopfKunde(k) {
     <h1>${esc(k.name)}</h1></div>`;
 }
 function datenKarte(k) {
+  if (istZusatz(k)) return `<div class="karte"><h2>${esc(k.name)}</h2><div class="z2">Zusätzlicher Standort · Vorschlag: Automat tauschen</div>
+    <dl class="daten">
+      <dt>Adresse</dt><dd>${esc(adresse(k))}<br>${esc(k.plz || "")} ${esc(k.ort)}</dd>
+      <dt>Aut-Nr.</dt><dd>${esc(k.aut || "–")}${k.schl ? " · Schl. " + esc(k.schl) : ""}</dd>
+      <dt>Jetzt</dt><dd>${esc(k.modell)}${k.turnus ? " · " + esc(k.turnus) : ""}</dd>
+    </dl><button class="knopf2" data-akt="zusatzaendern">Angaben ändern</button></div>`;
   const tel = k.tel ? `<a href="tel:${esc(k.tel.replace(/[^0-9+]/g, ""))}">${esc(k.tel)}</a>` : "–";
   return `<div class="karte"><h2>${esc(k.name)}</h2>${k.name2 ? `<div class="z2">${esc(k.name2)}</div>` : ""}
     <dl class="daten">
@@ -1552,6 +1655,11 @@ document.addEventListener("click", async ev => {
   if (akt === "senden") return senden();
   if (akt === "zipeinlesen") return document.getElementById("wahlZip").click();
   if (akt === "aktualisieren") return aktualisieren();
+  if (akt === "zusatzneu") { ui.zusatzId = null; ui.ansicht = "zusatz"; zeichnen(); return window.scrollTo(0, 0); }
+  if (akt === "zusatzaendern") { ui.zusatzId = ui.id; ui.ansicht = "zusatz"; zeichnen(); return window.scrollTo(0, 0); }
+  if (akt === "zusatzok") return zusatzSpeichern();
+  if (akt === "zusatzweg") return zusatzLoeschen();
+  if (akt === "zusatzab") { ui.ansicht = ui.zusatzId ? "kunde" : "liste"; ui.zusatzId = null; zeichnen(); return window.scrollTo(0, 0); }
   if (akt === "zipbauen") return zipErstellen();
   if (akt === "uebersicht") return uebersichtTeilen();
   if (akt === "sammeln") return document.getElementById("wahlSammel").click();
