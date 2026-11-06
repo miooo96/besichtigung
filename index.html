@@ -138,7 +138,7 @@ const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
 // Tourenplan-Karte aus der Kundenliste (eigener Schluessel: gross, und darf das Laden der Liste nie verhindern)
 const K_KARTE = "bes.karte";
 // Fassung des Programms - gleiche Nummer wie CACHE in sw.js; steht unter "Mehr"
-const FASSUNG = "28";
+const FASSUNG = "29";
 /* Mirko 04.11.2026: "koennen wir nicht einen Knopf aktualisieren einbauen, der neu laedt - bei mir klappt es
    mit neu laden in der App nicht". Loescht NUR den Programm-Zwischenspeicher (Cache Storage) - Angaben
    (localStorage) und Fotos (IndexedDB) bleiben unberuehrt - und holt die Seite frisch vom Server. */
@@ -154,6 +154,8 @@ async function aktualisieren() {
   location.reload();
 }
 const karteHolen = () => lesen(K_KARTE, null);
+// Strassen-Entfernungen (aus der Kundenliste, am Mac offline berechnet) und die zuletzt berechnete Route
+const K_WEGE = "bes.wege", K_ROUTE = "bes.route";
 const lesen = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const schreiben = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 /* Zusaetzliche Standorte (Mirko 05.11.2026: "manuell einen Kunden einpflegen, der einen guten Standort haette,
@@ -318,6 +320,7 @@ document.getElementById("datei").addEventListener("change", ev => {
       info.autor = d.autor || "";       // Name fuer die PDF-Eigenschaften und Foto-Daten
       info.vorlagen = d.vorlagen || {}; // Anbau-Vorlagen je SC-Typ (Bild + Lage), sonst Platzhalter
       schreiben(K_INFO, info);
+      try { if (d.wege && d.wege.ids) schreiben(K_WEGE, d.wege); else localStorage.removeItem(K_WEGE); } catch (err) { /* ohne Route weiter */ }
       try { if (d.karte && d.karte.bild) schreiben(K_KARTE, d.karte); else localStorage.removeItem(K_KARTE); }
       catch (err) { alert("Die Tourenplan-Karte ist zu groß für den Speicher – das PDF entsteht ohne Karte."); }
       zeige(liste.length + " Standorte geladen.");
@@ -1351,6 +1354,87 @@ async function zipEinlesen(datei) {
 document.getElementById("wahlZip").addEventListener("change", ev => { const f = ev.target.files[0]; ev.target.value = ""; zipEinlesen(f); });
 
 /* ================= Ansichten ================= */
+/* ================= Route fuer die offenen Kunden (Mirko 06.11.2026) ================= */
+// ROUTE-ORDNEN-ANFANG
+function routeOrdnen(D, ORT, knoten, strafe, starts) {
+  const laenge = q => { if (!q.length) return 0; let s = D[0][q[0]];
+    for (let i = 1; i < q.length; i++) s += D[q[i - 1]][q[i]]; return s + D[q[q.length - 1]][0]; };
+  const rueck = q => { const b = []; for (const j of q) if (!b.length || b[b.length - 1] !== ORT[j]) b.push(ORT[j]);
+    return b.length - new Set(b).size; };
+  const kosten = q => laenge(q) + strafe * rueck(q);
+  const verbessern = q => {
+    let best = kosten(q), besser = true;
+    while (besser) {
+      besser = false; const n = q.length;
+      for (let i = 0; i < n - 1 && !besser; i++) for (let k = i + 1; k < n && !besser; k++) {
+        const neu = [...q.slice(0, i), ...q.slice(i, k + 1).reverse(), ...q.slice(k + 1)], c = kosten(neu);
+        if (c + 0.1 < best) { q = neu; best = c; besser = true; }
+      }
+      if (besser) continue;
+      for (let seg = 1; seg <= 3 && !besser; seg++) for (let i = 0; i + seg <= n && !besser; i++) {
+        const block = q.slice(i, i + seg), rest = [...q.slice(0, i), ...q.slice(i + seg)];
+        for (let j = 0; j <= rest.length && !besser; j++) {
+          if (j === i) continue;
+          const neu = [...rest.slice(0, j), ...block, ...rest.slice(j)], c = kosten(neu);
+          if (c + 0.1 < best) { q = neu; best = c; besser = true; }
+        }
+      }
+    }
+    return [q, best];
+  };
+  const naechster = () => { const frei = new Set(knoten), q = []; let cur = 0;
+    while (frei.size) { let bj = null; for (const j of frei) if (bj === null || D[cur][j] < D[cur][bj]) bj = j;
+      q.push(bj); frei.delete(bj); cur = bj; }
+    return q; };
+  let zufall = 42;   // feste Folge: gleiche Eingabe -> gleiche Route
+  const rnd = () => (zufall = (zufall * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const mischen = () => { const q = [...knoten];
+    for (let i = q.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [q[i], q[j]] = [q[j], q[i]]; } return q; };
+  let bestQ = [], bestK = Infinity;
+  for (let s = 0; s <= starts; s++) { const [q, k] = verbessern(s ? mischen() : naechster()); if (k < bestK) { bestK = k; bestQ = q; } }
+  return { folge: bestQ, meter: laenge(bestQ) };
+}
+// ROUTE-ORDNEN-ENDE
+function routeBerechnen() {
+  const w = lesen(K_WEGE, null);
+  if (!w) { alert("In dieser Kundenliste fehlen die Straßen-Entfernungen. Bitte die neue Kundenliste laden (Mehr → Neue Kundenliste laden)."); return; }
+  const pos = {}; w.ids.forEach((id, i) => pos[id] = i);
+  const offen = kunden.filter(k => !(erg[k.id] && erg[k.id].fertig) && pos[k.id] !== undefined);
+  if (!offen.length) { alert("Es ist kein Kunde mehr offen."); return; }
+  zeige("Route wird berechnet …", 20000);
+  setTimeout(() => {   // erst die Meldung zeigen, dann rechnen
+    const r = routeOrdnen(w.m, w.ort, offen.map(k => pos[k.id]), w.regel_ort_am_stueck_m || 3000, offen.length > 45 ? 8 : 20);
+    let sek = r.folge.length ? w.s[0][r.folge[0]] + w.s[r.folge[r.folge.length - 1]][0] : 0;
+    for (let i = 1; i < r.folge.length; i++) sek += w.s[r.folge[i - 1]][r.folge[i]];
+    schreiben(K_ROUTE, { ids: r.folge.map(i => w.ids[i]), meter: r.meter, sekunden: sek, zeit: jetzt() });
+    zeige(`Route steht: ${r.folge.length} Kunden, ca. ${Math.round(r.meter / 1000)} km`, 3000); zeichnen(); window.scrollTo(0, 0);
+  }, 50);
+}
+function zeileKunde(k, platz) {
+  const s = status(k.id);
+  return `<button class="kunde" data-akt="oeffnen" data-id="${esc(k.id)}">
+        <div class="nr">${platz ? `${platz}.<div style="font-size:12px;font-weight:500;opacity:.7">${esc(k.nr)}</div>` : esc(k.nr)}</div>
+        <div class="mitte"><div class="name">${esc(k.name)}</div>
+          <div class="ort">${esc(adresse(k))} · ${esc(k.ort)}</div>
+          <div style="margin-top:4px">${istZusatz(k) ? `<span class="sc sx">Tausch · ${esc(k.modell)}</span>` : `<span class="sc ${scKlasse(k.sc)}">${esc(scText(k.sc))}</span>`}</div></div>
+        <div class="status ${s.k}">${s.t}</div></button>`;
+}
+function routeListe() {
+  const w = lesen(K_WEGE, null), r = lesen(K_ROUTE, null), offen = k => !(erg[k.id] && erg[k.id].fertig);
+  if (!w) return `<div class="hinweis">Für die Route fehlen in dieser Kundenliste die Straßen-Entfernungen. Bitte die neue Kundenliste laden (Mehr → Neue Kundenliste laden).</div>`;
+  const drin = r ? r.ids.map((id, i) => ({ k: kunden.find(x => x.id === id), platz: i + 1 })).filter(x => x.k && offen(x.k)) : [];
+  const fehlt = kunden.filter(k => offen(k) && !(r && r.ids.includes(k.id)));
+  const h = r ? Math.floor(r.sekunden / 3600) : 0, m = r ? Math.round(r.sekunden % 3600 / 60) : 0;
+  return `${r ? `<div class="karte klein"><b>Route vom ${uhr(r.zeit)}</b> · ${r.ids.length} Kunden · ca. ${Math.round(r.meter / 1000)} km · ca. ${h} Std. ${String(m).padStart(2, "0")} min reine Fahrzeit · Start und Ziel ${esc(w.start || "zuhause")}${drin.length < r.ids.length ? ` · noch offen: ${drin.length}` : ""}</div>`
+      : `<div class="hinweis">Sortiert alle noch offenen Kunden zu einer Rundtour ab und bis zuhause – an der Schnur, jeder Ort am Stück, mit echten Straßen-Entfernungen. Wer erledigt ist, fällt beim Abfahren einfach raus.</div>`}
+    <button class="${r ? "knopf2" : "gross start"}" data-akt="route" style="margin-bottom:10px">${r ? "🧭 Route neu berechnen" : "🧭 Route für die offenen berechnen"}</button>
+    ${drin.map(x => zeileKunde(x.k, x.platz)).join("")}
+    ${r && !drin.length ? `<div class="hinweis" style="background:var(--gruen-hell)">✓ Alle Kunden dieser Route sind erledigt.</div>` : ""}
+    ${r && fehlt.length ? `<div class="ordner" style="margin-top:14px">Nicht in dieser Route (${fehlt.length})</div>
+      <div class="klein" style="margin:0 2px 8px">${fehlt.some(k => w.ids.includes(k.id)) ? "„Route neu berechnen“ nimmt sie mit. " : ""}${fehlt.some(k => !w.ids.includes(k.id)) ? "Zusätzliche Standorte haben keine Kartenlage – bitte selbst einplanen." : ""}</div>
+      ${fehlt.map(k => zeileKunde(k)).join("")}` : ""}`;
+}
+
 /* ================= Zusaetzlicher Standort: anlegen / aendern / loeschen ================= */
 function ansichtZusatz() {
   const neu = !ui.zusatzId, z = zusatz.find(x => x.id === ui.zusatzId) || {};
@@ -1424,7 +1508,7 @@ function ansichtListe() {
     return norm([k.nr, k.name, k.name2, k.ort, k.strasse, k.aut, k.plz, k.modell].join(" ")).includes(q);
   });
   const fertig = kunden.filter(k => erg[k.id] && erg[k.id].fertig).length;
-  const offenIn = g => kunden.filter(k => (g === "alle" || k.gruppe === g) && !(erg[k.id] && erg[k.id].fertig)).length;
+  const offenIn = g => kunden.filter(k => (g === "alle" || g === "route" || k.gruppe === g) && !(erg[k.id] && erg[k.id].fertig)).length;
   const gchip = (g, t) => `<button class="chip ${ui.gruppe === g ? "an" : ""}" data-akt="gruppe" data-wert="${g}">${t} <span class="klein" style="color:inherit;opacity:.75">${offenIn(g)} offen</span></button>`;
   return `<div class="kopf"><div class="zeile"><div style="flex:1"><h1>Besichtigung</h1>
       <div class="unter">${fertig} von ${kunden.length} erledigt</div></div>
@@ -1432,19 +1516,13 @@ function ansichtListe() {
       <button class="chip" data-akt="mehr" style="background:transparent;color:#fff;border-color:#ffffff66">Mehr</button></div></div>
   <main>
     <div class="suche"><input id="suche" type="search" placeholder="Name, Ort, Straße, Aut-Nr. …" value="${esc(ui.suche)}" autocomplete="off"></div>
-    ${hatGruppen ? `<div class="filter">${gchip("woche", "Diese Woche")}${gchip("samstag", "Samstag")}${gchip("zusatz", "Zusätzlich")}${gchip("alle", "Alle")}</div>` : ""}
+    ${hatGruppen ? `<div class="filter">${gchip("woche", "Diese Woche")}${gchip("samstag", "Samstag")}${gchip("zusatz", "Zusätzlich")}${gchip("alle", "Alle")}${gchip("route", "🧭 Route")}</div>` : ""}
     ${ui.gruppe === "zusatz" ? `<button class="gross start" data-akt="zusatzneu" style="margin-bottom:6px">＋ Standort hinzufügen</button>
       <div class="klein" style="margin:0 2px 10px">Gut laufender Automat an gutem, zentralem Standort mit anderem Modell – eventuell gegen Sielaff mit Anbau tauschen. Besichtigung wie bei allen: Maßband-Foto, rechts frei, Lage.</div>` : ""}
     <div class="filter"><button class="chip ${ui.nurOffen ? "an" : ""}" data-akt="nuroffen">Nur offene</button>
       <button class="chip" data-akt="sammeln" style="border-color:var(--blau2);color:var(--blau2);font-weight:650">📷 Fotos zuordnen</button></div>
-    <div class="stand">${treffer.length} angezeigt · ${hatGruppen ? "W = diese Woche auf der Tour · 1, 2, 3 … = Samstagsroute · Z = zusätzlich" : "Nummer = Fahrreihenfolge"}</div>
-    ${treffer.map(k => { const s = status(k.id); return `
-      <button class="kunde" data-akt="oeffnen" data-id="${esc(k.id)}">
-        <div class="nr">${esc(k.nr)}</div>
-        <div class="mitte"><div class="name">${esc(k.name)}</div>
-          <div class="ort">${esc(adresse(k))} · ${esc(k.ort)}</div>
-          <div style="margin-top:4px">${istZusatz(k) ? `<span class="sc sx">Tausch · ${esc(k.modell)}</span>` : `<span class="sc ${scKlasse(k.sc)}">${esc(scText(k.sc))}</span>`}</div></div>
-        <div class="status ${s.k}">${s.t}</div></button>`; }).join("")}
+    <div class="stand" ${ui.gruppe === "route" ? 'style="display:none"' : ""}>${treffer.length} angezeigt · ${hatGruppen ? "W = diese Woche auf der Tour · 1, 2, 3 … = Samstagsroute · Z = zusätzlich" : "Nummer = Fahrreihenfolge"}</div>
+    ${ui.gruppe === "route" ? routeListe() : treffer.map(k => zeileKunde(k)).join("")}
   </main>`;
 }
 
@@ -1648,6 +1726,7 @@ document.addEventListener("click", async ev => {
   if (akt === "senden") return senden();
   if (akt === "zipeinlesen") return document.getElementById("wahlZip").click();
   if (akt === "aktualisieren") return aktualisieren();
+  if (akt === "route") return routeBerechnen();
   if (akt === "zusatzneu") { ui.zusatzId = null; ui.ansicht = "zusatz"; zeichnen(); return window.scrollTo(0, 0); }
   if (akt === "zusatzaendern") { ui.zusatzId = ui.id; ui.ansicht = "zusatz"; zeichnen(); return window.scrollTo(0, 0); }
   if (akt === "zusatzok") return zusatzSpeichern();
