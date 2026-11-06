@@ -3,7 +3,7 @@
    eine alte Fassung, solange Empfang besteht (Lehre vom 05.09.2026), und im
    Funkloch laeuft die Seite trotzdem. Es werden nur die Programmdateien
    gespeichert - die Kundenliste liegt im Geraetespeicher der Seite. */
-const CACHE = "besichtigung-v31";  // v31 06.11.2026: Tausch-Standorte in der Route (Ortsmitte)
+const CACHE = "besichtigung-v32";  // v32 06.11.2026: ZIP fuer den Chef (nur PDF, 1200 px) + Sicherung
 const DATEIEN = ["./", "index.html", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", ev => {

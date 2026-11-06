@@ -138,7 +138,7 @@ const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
 // Tourenplan-Karte aus der Kundenliste (eigener Schluessel: gross, und darf das Laden der Liste nie verhindern)
 const K_KARTE = "bes.karte";
 // Fassung des Programms - gleiche Nummer wie CACHE in sw.js; steht unter "Mehr"
-const FASSUNG = "31";
+const FASSUNG = "32";
 /* Mirko 04.11.2026: "koennen wir nicht einen Knopf aktualisieren einbauen, der neu laedt - bei mir klappt es
    mit neu laden in der App nicht". Loescht NUR den Programm-Zwischenspeicher (Cache Storage) - Angaben
    (localStorage) und Fotos (IndexedDB) bleiben unberuehrt - und holt die Seite frisch vom Server. */
@@ -942,7 +942,7 @@ async function pdfBild(blob, max) {
   const f = Math.min(1, max / Math.max(b.width, b.height));
   const c = document.createElement("canvas"); c.width = Math.round(b.width * f); c.height = Math.round(b.height * f);
   const x = c.getContext("2d"); x.fillStyle = "#ffffff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(b, 0, 0, c.width, c.height);
-  const j = await new Promise(res => c.toBlob(res, "image/jpeg", 0.82));
+  const j = await new Promise(res => c.toBlob(res, "image/jpeg", 0.75));
   return { bytes: new Uint8Array(await j.arrayBuffer()), w: c.width, h: c.height };
 }
 async function pdfErstellen(plan, stempel, fortschritt) {
@@ -1030,7 +1030,8 @@ async function pdfErstellen(plan, stempel, fortschritt) {
       // Mirko 06.11.2026: "die einzelnen Kundenfotos groesser zeigen bzw. mehr Platz nehmen ... auf die kommt es
       // letztendlich an" -> jedes Foto allein, so gross wie der Platz auf der Seite erlaubt (vorher zwei nebeneinander)
       for (const m of liste) {
-        const b = await pdfBild(stempel.get(m.id) || m.blob, 1800); if (fortschritt) fortschritt(++fertigeBilder, alleBilder);
+        // 1200 px: auf der Seite gleich gross, PDF passt in eine Mail (Mirko 06.11.: "muss es via E-Mail schicken")
+        const b = await pdfBild(stempel.get(m.id) || m.blob, 1200); if (fortschritt) fortschritt(++fertigeBilder, alleBilder);
         if (UNTEN - doc.y < 320) neu();   // zu wenig Platz -> eigene Seite statt Briefmarke
         const f = Math.min(B / b.w, (UNTEN - doc.y) / b.h), w = b.w * f, h = b.h * f;
         doc.bild(doc.bildNeu(b), RAND + (B - w) / 2, doc.y, w, h);
@@ -1081,7 +1082,10 @@ async function uebersichtTeilen() {
   } finally { ui.zipLaeuft = false; zeichnen(); }
 }
 // ZIP = das PDF + die Fotos in voller Groesse (sortiert: 1 Kommt in Frage / W01 ..., 02 ...)
-async function zipErstellen() {
+/* Mirko 06.11.2026: "mein Chef will 'ne ZIP-Datei" - "muss es halt via E-Mail schicken" -> ZIP fuer den Chef
+   enthaelt nur das PDF (alle Kunden, alle Fotos darin). Die Sicherung behaelt die Fotos in voller Groesse,
+   denn "Aus ZIP wiederherstellen" holt die Fotos aus deren Ordner. */
+async function zipErstellen(nurPdf) {
   if (ui.zipLaeuft) return; ui.zipLaeuft = true; zeichnen();
   try {
     const plan = zipPlan(await medienAlle());
@@ -1092,14 +1096,14 @@ async function zipErstellen() {
     // Mirko 04.11.2026: Julian und Uwe sollen beim Oeffnen ZUERST die Standortpruefung sehen ->
     // "1 ..." vor "2 Fotos ..." (nach Namen sortiert steht das PDF so oben; Windows zeigt Ordner immer zuerst)
     eintraege.push({ name: "1 " + pdfName(), blob: pdf });
-    const ober = oberOrdner(plan);
+    const ober = nurPdf ? {} : oberOrdner(plan);
     for (const [gk, ordner] of Object.entries(ober)) for (const x of plan[gk]) {   // ja, vielleicht, nein, zusatz
       const basis = `${fotoOrdner()}/${ordner}/${ordnerName(x.k)}/`;
       const namen = dateiNamen(x.medien);
       x.medien.forEach((m, i) => eintraege.push({ name: basis + namen[i], blob: stempel.get(m.id) || m.blob }));   // beschriftete Fassung
     }
     const zip = await zipBauen(eintraege, (n, g) => zeige(`ZIP wird erstellt … ${n} / ${g}`, 20000));
-    const datei = new File([zip], `${sauber(info.titel || "Besichtigung")} ${heute()}.zip`, { type: "application/zip" });
+    const datei = new File([zip], `${sauber(info.titel || "Besichtigung")} ${heute()}${nurPdf ? "" : " Sicherung"}.zip`, { type: "application/zip" });
     zeige("ZIP fertig (" + mb(zip.size) + ")");
     await teilen(datei);
   } catch (err) {
@@ -1542,7 +1546,7 @@ function ansichtMehr() {
     <div class="karte"><b>Werkzeug aktualisieren</b><p class="klein">Holt die neueste Fassung aus dem Netz. Ihre Angaben, Fotos und die Kundenliste bleiben.</p>
       <p class="klein" id="stand">Diese Fassung: <b>${FASSUNG}</b> · Kundenliste vom ${esc(info.stand || "–")}</p>
       <button class="knopf2" data-akt="aktualisieren">🔄 Jetzt aktualisieren</button></div>
-    <div class="karte"><b>ZIP für den Chef</b><p class="klein">Vorschau ansehen und als ZIP auf dem iPhone sichern („In Dateien sichern“) oder weitergeben. Abends einmal sichern – das ist zugleich Ihre Sicherung der Fotos.</p>
+    <div class="karte"><b>ZIP für den Chef und Sicherung</b><p class="klein">Vorschau ansehen, dann „ZIP für den Chef“ (nur das PDF, passt in eine Mail) oder „Sicherung speichern“ (mit allen Fotos – abends in „Dateien“ sichern).</p>
       <button class="gross start" data-akt="zip">ZIP-Vorschau</button></div>
     <div class="karte"><b>Aus ZIP wiederherstellen</b><p class="klein">Holt Angaben und Fotos aus einer ZIP zurück, die mit diesem Werkzeug erstellt wurde – z. B. nachdem die App gelöscht wurde oder auf einem neuen Handy. Vorher die Kundenliste laden. Was im Werkzeug schon steht, wird nicht überschrieben.</p>
       <button class="knopf2" data-akt="zipeinlesen">ZIP wählen</button></div>
@@ -1590,9 +1594,12 @@ function ansichtZip() {
   const groesse = bewertet(plan).reduce((s, x) => s + x.medien.reduce((t, m) => t + m.blob.size, 0), 0);
   return kopf + `<main>
     <div class="karte"><div>📄 <b>Ein PDF</b> – Seite 1: Übersicht aller Standorte, danach <b>je Kunde eine Seite</b> mit allen Angaben und den Fotos (in Fahrreihenfolge)${info.auswahl ? `<div class="klein" style="margin-top:4px">„${esc(info.auswahl)}“</div>` : ""}${info.vermerk ? `<div class="klein" style="margin-top:4px">„${esc(info.vermerk)}“ steht oben auf jeder Seite und klein auf jedem Foto.</div>` : ""}</div>
-      <div class="klein" style="margin-top:6px">In der ZIP steht das PDF zuerst („1 ${esc(pdfName())}“), darunter der Ordner „${fotoOrdner()}“. ${standorte(bewertet(plan).length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
-    <button class="gross start" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP erstellen und sichern"}</button>
-    <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur PDF teilen (eine Datei, z. B. für die Mail)</button>
+      <div class="klein" style="margin-top:6px">In der Sicherung steht das PDF zuerst („1 ${esc(pdfName())}“), darunter der Ordner „${fotoOrdner()}“. ${standorte(bewertet(plan).length)} · Fotos ca. ${mb(groesse)}${plan.offen.length ? ` · ${plan.offen.length} noch nicht bewertet (nicht dabei)` : ""}</div></div>
+    <button class="gross start" data-akt="zipchef" ${ui.zipLaeuft ? "disabled" : ""}>${ui.zipLaeuft ? "Wird erstellt …" : "ZIP für den Chef (für E-Mail)"}</button>
+    <div class="klein" style="margin:-4px 2px 10px">Nur das PDF – alle Kunden mit allen Fotos. Klein genug für eine E-Mail.</div>
+    <button class="knopf2" data-akt="zipbauen" ${ui.zipLaeuft ? "disabled" : ""}>Sicherung speichern (ZIP mit allen Fotos in voller Größe)</button>
+    <div class="klein" style="margin:2px 2px 10px">Für Sie: abends in „Dateien“ sichern. Damit lässt sich alles wiederherstellen. Zu groß für eine Mail.</div>
+    <button class="knopf2" data-akt="uebersicht" ${ui.zipLaeuft ? "disabled" : ""}>Nur PDF teilen (ohne ZIP)</button>
     ${Object.entries(oberOrdner(plan)).map(([k, name]) =>
       `<div class="ordner">${esc(name)} (${plan[k].length})</div>${plan[k].map(x => karte(x, k)).join("") || `<p class="klein">–</p>`}`).join("")}
   </main>`;
@@ -1742,7 +1749,8 @@ document.addEventListener("click", async ev => {
   if (akt === "zusatzok") return zusatzSpeichern();
   if (akt === "zusatzweg") return zusatzLoeschen();
   if (akt === "zusatzab") { ui.ansicht = ui.zusatzId ? "kunde" : "liste"; ui.zusatzId = null; zeichnen(); return window.scrollTo(0, 0); }
-  if (akt === "zipbauen") return zipErstellen();
+  if (akt === "zipchef") return zipErstellen(true);
+  if (akt === "zipbauen") return zipErstellen(false);
   if (akt === "uebersicht") return uebersichtTeilen();
   if (akt === "sammeln") return document.getElementById("wahlSammel").click();
   if (akt === "sammelok") return sammelUebernehmen();
