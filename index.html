@@ -138,7 +138,7 @@ const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
 // Tourenplan-Karte aus der Kundenliste (eigener Schluessel: gross, und darf das Laden der Liste nie verhindern)
 const K_KARTE = "bes.karte";
 // Fassung des Programms - gleiche Nummer wie CACHE in sw.js; steht unter "Mehr"
-const FASSUNG = "30";
+const FASSUNG = "31";
 /* Mirko 04.11.2026: "koennen wir nicht einen Knopf aktualisieren einbauen, der neu laedt - bei mir klappt es
    mit neu laden in der App nicht". Loescht NUR den Programm-Zwischenspeicher (Cache Storage) - Angaben
    (localStorage) und Fotos (IndexedDB) bleiben unberuehrt - und holt die Seite frisch vom Server. */
@@ -1391,10 +1391,20 @@ function routeOrdnen(D, ORT, knoten, strafe, starts) {
   return { folge: bestQ, meter: laenge(bestQ) };
 }
 // ROUTE-ORDNEN-ENDE
+// Kunde -> Zeile in der Entfernungs-Tabelle. Tausch-Standorte (am Handy angelegt) ueber Nr. + Name; ihre Lage
+// ist nur die Ortsmitte (Mirko 06.11.2026: "die 13 Tausch-ATMs sollen mit in die Liste").
+function wegeIndex(w) {
+  const pos = {}; w.ids.forEach((id, i) => pos[id] = i);
+  for (const z of (w.zusatz || [])) {
+    const k = zusatz.find(x => x.nr === z.nr && norm(x.name) === norm(z.name)) || zusatz.find(x => norm(x.name) === norm(z.name));
+    if (k) pos[k.id] = z.idx;
+  }
+  return pos;
+}
 function routeBerechnen() {
   const w = lesen(K_WEGE, null);
   if (!w) { alert("In dieser Kundenliste fehlen die Straßen-Entfernungen. Bitte die neue Kundenliste laden (Mehr → Neue Kundenliste laden)."); return; }
-  const pos = {}; w.ids.forEach((id, i) => pos[id] = i);
+  const pos = wegeIndex(w);
   const offen = kunden.filter(k => !(erg[k.id] && erg[k.id].fertig) && pos[k.id] !== undefined);
   if (!offen.length) { alert("Es ist kein Kunde mehr offen."); return; }
   zeige("Route wird berechnet …", 20000);
@@ -1402,7 +1412,8 @@ function routeBerechnen() {
     const r = routeOrdnen(w.m, w.ort, offen.map(k => pos[k.id]), w.regel_ort_am_stueck_m || 3000, offen.length > 45 ? 8 : 20);
     let sek = r.folge.length ? w.s[0][r.folge[0]] + w.s[r.folge[r.folge.length - 1]][0] : 0;
     for (let i = 1; i < r.folge.length; i++) sek += w.s[r.folge[i - 1]][r.folge[i]];
-    schreiben(K_ROUTE, { ids: r.folge.map(i => w.ids[i]), meter: r.meter, sekunden: sek, zeit: jetzt() });
+    const kundeAn = {}; offen.forEach(k => kundeAn[pos[k.id]] = k.id);   // Tabellenzeile -> Kunde (auch Tausch-Standorte)
+    schreiben(K_ROUTE, { ids: r.folge.map(i => kundeAn[i]), meter: r.meter, sekunden: sek, zeit: jetzt() });
     zeige(`Route steht: ${r.folge.length} Kunden, ca. ${Math.round(r.meter / 1000)} km`, 3000); zeichnen(); window.scrollTo(0, 0);
   }, 50);
 }
@@ -1419,15 +1430,18 @@ function routeListe() {
   const w = lesen(K_WEGE, null), r = lesen(K_ROUTE, null), offen = k => !(erg[k.id] && erg[k.id].fertig);
   if (!w) return `<div class="hinweis">Für die Route fehlen in dieser Kundenliste die Straßen-Entfernungen. Bitte die neue Kundenliste laden (Mehr → Neue Kundenliste laden).</div>`;
   const drin = r ? r.ids.map((id, i) => ({ k: kunden.find(x => x.id === id), platz: i + 1 })).filter(x => x.k && offen(x.k)) : [];
-  const fehlt = kunden.filter(k => offen(k) && !(r && r.ids.includes(k.id)));
+  const fehlt = kunden.filter(k => offen(k) && !(r && r.ids.includes(k.id))), pos = wegeIndex(w);
+  const zInRoute = drin.filter(x => istZusatz(x.k));
+  const annahmen = (w.zusatz || []).filter(z => z.annahme && drin.some(x => istZusatz(x.k) && pos[x.k.id] === z.idx));
   const h = r ? Math.floor(r.sekunden / 3600) : 0, m = r ? Math.round(r.sekunden % 3600 / 60) : 0;
   return `${r ? `<div class="karte klein"><b>Route vom ${uhr(r.zeit)}</b> · ${r.ids.length} Kunden · ca. ${Math.round(r.meter / 1000)} km · ca. ${h} Std. ${String(m).padStart(2, "0")} min reine Fahrzeit · Start und Ziel ${esc(w.start || "zuhause")}${drin.length < r.ids.length ? ` · noch offen: ${drin.length}` : ""}</div>`
       : `<div class="hinweis">Sortiert alle noch offenen Kunden zu einer Rundtour ab und bis zuhause – an der Schnur, jeder Ort am Stück, mit echten Straßen-Entfernungen. Wer erledigt ist, fällt beim Abfahren einfach raus.</div>`}
     <button class="${r ? "knopf2" : "gross start"}" data-akt="route" style="margin-bottom:10px">${r ? "🧭 Route neu berechnen" : "🧭 Route für die offenen berechnen"}</button>
+    ${zInRoute.length ? `<div class="klein" style="margin:0 2px 10px">Tausch-Standorte (Z) sind nach Ortsmitte eingeordnet – ihre Straße kennt die Route nicht.${annahmen.map(z => ` ${esc(z.nr)}: „Buseck“ als ${esc(z.ortsteil)} angenommen.`).join("")}</div>` : ""}
     ${drin.map(x => zeileKunde(x.k, x.platz)).join("")}
     ${r && !drin.length ? `<div class="hinweis" style="background:var(--gruen-hell)">✓ Alle Kunden dieser Route sind erledigt.</div>` : ""}
     ${r && fehlt.length ? `<div class="ordner" style="margin-top:14px">Nicht in dieser Route (${fehlt.length})</div>
-      <div class="klein" style="margin:0 2px 8px">${fehlt.some(k => w.ids.includes(k.id)) ? "„Route neu berechnen“ nimmt sie mit. " : ""}${fehlt.some(k => !w.ids.includes(k.id)) ? "Zusätzliche Standorte haben keine Kartenlage – bitte selbst einplanen." : ""}</div>
+      <div class="klein" style="margin:0 2px 8px">${fehlt.some(k => pos[k.id] !== undefined) ? "„Route neu berechnen“ nimmt sie mit. " : ""}${fehlt.some(k => pos[k.id] === undefined) ? "Für diese Tausch-Standorte kennt die Route keine Lage – bitte selbst einplanen." : ""}</div>
       ${fehlt.map(k => zeileKunde(k)).join("")}` : ""}`;
 }
 
