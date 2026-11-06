@@ -138,7 +138,7 @@ const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
 // Tourenplan-Karte aus der Kundenliste (eigener Schluessel: gross, und darf das Laden der Liste nie verhindern)
 const K_KARTE = "bes.karte";
 // Fassung des Programms - gleiche Nummer wie CACHE in sw.js; steht unter "Mehr"
-const FASSUNG = "29";
+const FASSUNG = "30";
 /* Mirko 04.11.2026: "koennen wir nicht einen Knopf aktualisieren einbauen, der neu laedt - bei mir klappt es
    mit neu laden in der App nicht". Loescht NUR den Programm-Zwischenspeicher (Cache Storage) - Angaben
    (localStorage) und Fotos (IndexedDB) bleiben unberuehrt - und holt die Seite frisch vom Server. */
@@ -1027,18 +1027,14 @@ async function pdfErstellen(plan, stempel, fortschritt) {
     const bilderZeigen = async (liste, ueberschrift) => {
       if (!liste.length) return;
       if (ueberschrift) { if (doc.y > UNTEN - 120) neu(); doc.text(ueberschrift, RAND, doc.y, 10, { fett: true, farbe: "#374151" }); doc.y += 16; }
-      for (let i = 0; i < liste.length; i += 2) {
-        const paar = liste.slice(i, i + 2);
-        const bilder = [];
-        for (const m of paar) { bilder.push(await pdfBild(stempel.get(m.id) || m.blob, 1400)); if (fortschritt) fortschritt(++fertigeBilder, alleBilder); }
-        const breit = paar.length === 1 && bilder[0].w > bilder[0].h;
-        const zw = breit ? B : (B - 14) / 2;
-        let zh = Math.min(430, UNTEN - doc.y);
-        if (zh < 180) { neu(); zh = Math.min(430, UNTEN - doc.y); }
-        let hoch = 0;
-        bilder.forEach((b, j) => { const f = Math.min(zw / b.w, zh / b.h), w = b.w * f, h = b.h * f;
-          doc.bild(doc.bildNeu(b), RAND + j * (zw + 14), doc.y, w, h); hoch = Math.max(hoch, h); });
-        doc.y += hoch + 12;
+      // Mirko 06.11.2026: "die einzelnen Kundenfotos groesser zeigen bzw. mehr Platz nehmen ... auf die kommt es
+      // letztendlich an" -> jedes Foto allein, so gross wie der Platz auf der Seite erlaubt (vorher zwei nebeneinander)
+      for (const m of liste) {
+        const b = await pdfBild(stempel.get(m.id) || m.blob, 1800); if (fortschritt) fortschritt(++fertigeBilder, alleBilder);
+        if (UNTEN - doc.y < 320) neu();   // zu wenig Platz -> eigene Seite statt Briefmarke
+        const f = Math.min(B / b.w, (UNTEN - doc.y) / b.h), w = b.w * f, h = b.h * f;
+        doc.bild(doc.bildNeu(b), RAND + (B - w) / 2, doc.y, w, h);
+        doc.y += h + 12;
       }
     };
     const mass = e.medien.filter(m => m.art !== "montage"), mont = e.medien.filter(m => m.art === "montage");
