@@ -138,7 +138,7 @@ const K_KUNDEN = "bes.kunden", K_ERG = "bes.ergebnisse", K_INFO = "bes.info";
 // Tourenplan-Karte aus der Kundenliste (eigener Schluessel: gross, und darf das Laden der Liste nie verhindern)
 const K_KARTE = "bes.karte";
 // Fassung des Programms - gleiche Nummer wie CACHE in sw.js; steht unter "Mehr"
-const FASSUNG = "32";
+const FASSUNG = "33";
 /* Mirko 04.11.2026: "koennen wir nicht einen Knopf aktualisieren einbauen, der neu laedt - bei mir klappt es
    mit neu laden in der App nicht". Loescht NUR den Programm-Zwischenspeicher (Cache Storage) - Angaben
    (localStorage) und Fotos (IndexedDB) bleiben unberuehrt - und holt die Seite frisch vom Server. */
@@ -768,13 +768,19 @@ async function mitExif(blob, felder) {
   const pos = buf[2] === 0xFF && buf[3] === 0xE0 ? 4 + ((buf[4] << 8) | buf[5]) : 2;   // hinter JFIF-Kopf
   return new Blob([buf.slice(0, pos), app1, buf.slice(pos)], { type: "image/jpeg" });
 }
+// Balken auf jedem Foto: Kunde, Ort, Tag. Bei Tausch-Geraeten zusaetzlich das jetzige Modell
+// (Mirko 07.11.2026: "bei den Tausch-Geraeten dazuschreiben, welches Modell es aktuell ist").
+function stempelZeilen(k, tage) {
+  return [`${k.nr} · ${k.name} · ${k.ort}${tage ? " · " + tage : ""}`,
+    istZusatz(k) ? `Jetziges Modell: ${k.modell || "–"} – eventuell gegen Sielaff mit Anbau tauschen` : "", info.vermerk || ""];
+}
 async function stempelAlle(plan, fortschritt) {
   const fertig = new Map(), alle = bewertet(plan); let n = 0;
   const gesamt = alle.reduce((s, x) => s + x.medien.length, 0);
   for (const x of alle) {
     const k = x.k, tage = besuchsTage(x.r).join(", ");
     for (const m of x.medien) {
-      const bild = await stempeln(m.blob, [`${k.nr} · ${k.name} · ${k.ort}${tage ? " · " + tage : ""}`, info.vermerk || ""]);
+      const bild = await stempeln(m.blob, stempelZeilen(k, tage));
       fertig.set(m.id, await mitExif(bild, [[0x010E, info.vermerk], [0x013B, info.autor],
         [0x8298, info.autor ? `(c) ${info.autor} - ${info.titel || ""}` : ""]]));
       if (fortschritt) fortschritt(++n, gesamt);
